@@ -1,0 +1,7 @@
+{
+  "name": "SRK Enterprises - Desktop Billing & Tax Invoice System",
+  "description": "Professional desktop billing and GST tax invoice software for SRK Enterprises featuring daily box billing, client directory, ledger tracking, reports, and tax invoice printing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
