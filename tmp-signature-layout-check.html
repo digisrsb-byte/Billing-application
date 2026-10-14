@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Signature layout check</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f3f4f6; padding: 40px; }
+    .page { width: 820px; background: #fff; margin: 0 auto; padding: 40px; border: 1px solid #ddd; }
+    .block { margin-top: 56px; display: flex; justify-content: flex-end; }
+    .auth { width: 250px; display: flex; flex-direction: column; }
+    .for { font-size: 14px; font-weight: 600; text-align: right; margin-bottom: 12px; color: #111; }
+    .sig-wrap { width: 100%; display: flex; justify-content: center; margin-bottom: 8px; }
+    .sig-wrap img { height: 72px; width: auto; max-width: 230px; object-fit: contain; }
+    .line { width: 100%; border-bottom: 1px solid #9ca3af; margin-bottom: 8px; }
+    .label { width: 100%; text-align: center; font-size: 14px; font-weight: 700; color: #111; }
+    .note { margin-top: 40px; text-align: center; color: #9ca3af; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <p style="color:#666;font-size:13px;">Sample authorization block (same order as invoice)</p>
+    <div class="block">
+      <div class="auth">
+        <div class="for">For SRK Enterprises</div>
+        <div class="sig-wrap">
+          <img src="./src/assets/images/srk_signature_transparent.png" alt="signature" />
+        </div>
+        <div class="line"></div>
+        <div class="label">Authorized Signature</div>
+      </div>
+    </div>
+    <div class="note">This is a computer-generated tax invoice.</div>
+  </div>
+</body>
+</html>

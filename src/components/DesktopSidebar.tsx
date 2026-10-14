@@ -8,7 +8,8 @@ import {
   CreditCard,
   BarChart3,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  LogOut
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 
@@ -28,13 +29,15 @@ interface DesktopSidebarProps {
   onNavigate: (view: NavView, reportTab?: 'day' | 'month' | 'payment') => void;
   pendingCount: number;
   customLogoUrl?: string;
+  onLogout?: () => void;
 }
 
 export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   currentView,
   onNavigate,
   pendingCount,
-  customLogoUrl
+  customLogoUrl,
+  onLogout
 }) => {
   const navItems: {
     id: NavView;
@@ -111,11 +114,21 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
         </nav>
       </div>
 
-      <div className="p-4 border-t border-white/10">
+      <div className="p-4 border-t border-white/10 space-y-3">
         <div className="flex items-center gap-2 text-xs text-white/60">
           <ShieldCheck className="w-4 h-4 shrink-0 text-[#1F7A63]" />
           <span>Works offline · data saved on this PC</span>
         </div>
+        {onLogout && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="w-full flex items-center justify-center gap-2 h-10 rounded-xl text-sm font-semibold text-white/85 bg-white/10 hover:bg-white/15 cursor-pointer transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+        )}
       </div>
     </aside>
   );

@@ -1,6 +1,15 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AppDatabase, Invoice, Client, PaymentRecord, CompanySettings } from './types/billing';
-import { getDatabase, saveDatabase, resetDatabase } from './services/storage';
+import {
+  getDatabase,
+  saveDatabase,
+  resetDatabase,
+  recordAudit,
+  DatabaseLoadError,
+  restoreFromDatabase
+} from './services/storage';
+import { hydrateSession, isLoggedIn, clearSession } from './services/auth';
+import { applyInvoiceSave } from './services/invoiceIntegrity';
 import { calculateInvoice } from './utils/formatters';
 import { DesktopSidebar, NavView } from './components/DesktopSidebar';
 import { DesktopHeader } from './components/DesktopHeader';
@@ -15,13 +24,19 @@ import { SettingsView } from './components/SettingsView';
 import { TaxInvoiceReport } from './components/TaxInvoiceReport';
 import { NewInvoiceModal } from './components/NewInvoiceModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { LoginView } from './components/LoginView';
+import { DatabaseRecoveryView } from './components/DatabaseRecoveryView';
 import { CheckCircle2, X } from 'lucide-react';
 
 export default function App() {
-  const [db, setDb] = useState<AppDatabase>(() => getDatabase());
+  const [authReady, setAuthReady] = useState(false);
+  const [authed, setAuthed] = useState(false);
+  const [db, setDb] = useState<AppDatabase | null>(null);
+  const [dbLoadError, setDbLoadError] = useState<DatabaseLoadError | null>(null);
   const [currentView, setCurrentView] = useState<NavView>('overview');
   const [activeReportTab, setActiveReportTab] = useState<'day' | 'month' | 'payment' | 'gst'>('day');
   const [searchQuery, setSearchQuery] = useState('');
+  const dbRef = useRef<AppDatabase | null>(null);
 
   // Modals
   const [activeInvoiceForPrint, setActiveInvoiceForPrint] = useState<Invoice | null>(null);
@@ -32,7 +47,55 @@ export default function App() {
   const [recordPaymentForInvoice, setRecordPaymentForInvoice] = useState<Invoice | null>(null);
   const [isGenericPaymentModalOpen, setIsGenericPaymentModalOpen] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
+  const [invoiceToVoid, setInvoiceToVoid] = useState<Invoice | null>(null);
+  const [voidReason, setVoidReason] = useState('');
   const [clientToDelete, setClientToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  const commitDb = useCallback((next: AppDatabase) => {
+    dbRef.current = next;
+    setDb(next);
+  }, []);
+
+  const tryLoadDatabase = useCallback(async () => {
+    try {
+      const loaded = await getDatabase();
+      commitDb(loaded);
+      setDbLoadError(null);
+      return true;
+    } catch (e) {
+      if (e instanceof DatabaseLoadError) {
+        dbRef.current = null;
+        setDb(null);
+        setDbLoadError(e);
+        return false;
+      }
+      throw e;
+    }
+  }, [commitDb]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = await hydrateSession();
+      if (cancelled) return;
+      setAuthed(ok);
+      if (ok) {
+        try {
+          await tryLoadDatabase();
+        } catch {
+          clearSession();
+          setAuthed(false);
+          dbRef.current = null;
+          setDb(null);
+          setDbLoadError(null);
+        }
+      }
+      setAuthReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tryLoadDatabase]);
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -48,64 +111,89 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
-  // Invoice Handlers
+  // Invoice Handlers — uniqueness + finalized lock enforced before persist
   const handleSaveInvoice = useCallback(
-    (invoice: Invoice, openPrint: boolean = true) => {
-      setDb((prev) => {
-        const existingIdx = prev.invoices.findIndex((i) => i.id === invoice.id);
-        let nextInvoices = [...prev.invoices];
-        let nextSeq = prev.settings.nextSeq;
+    async (invoice: Invoice, openPrint: boolean = true) => {
+      const prev = dbRef.current;
+      if (!prev) return;
 
-        if (existingIdx >= 0) {
-          nextInvoices[existingIdx] = invoice;
-        } else {
-          nextInvoices.push(invoice);
-          nextSeq += 1;
+      const result = applyInvoiceSave(
+        prev.invoices,
+        prev.settings.nextSeq,
+        invoice,
+        prev.settings.invoicePrefix
+      );
+
+      if (!result.ok) {
+        showToast(
+          result.reason === 'DUPLICATE_INVOICE_NO'
+            ? 'Invoice number already exists — save cancelled'
+            : 'This invoice is finalized and cannot be edited'
+        );
+        return;
+      }
+
+      const nextDb: AppDatabase = {
+        ...prev,
+        invoices: result.invoices,
+        settings: {
+          ...prev.settings,
+          nextSeq: result.nextSeq
         }
+      };
 
-        const nextDb: AppDatabase = {
-          ...prev,
-          invoices: nextInvoices,
-          settings: {
-            ...prev.settings,
-            nextSeq
-          }
-        };
-
-        saveDatabase(nextDb);
-        return nextDb;
-      });
-
-      if (openPrint) {
-        setActiveInvoiceForPrint(invoice);
+      try {
+        await saveDatabase(nextDb);
+        commitDb(nextDb);
+        if (openPrint) {
+          setActiveInvoiceForPrint(result.saved);
+        }
+      } catch (err) {
+        showToast(
+          err instanceof Error && err.message === 'DUPLICATE_INVOICE_NO'
+            ? 'Invoice number already exists — save cancelled'
+            : 'Could not save invoice'
+        );
       }
     },
-    []
+    [commitDb, showToast]
   );
 
   // Client Handlers
+  const persistClient = useCallback(
+    async (client: Client) => {
+      const prev = dbRef.current;
+      if (!prev) return;
+      const existingIdx = prev.clients.findIndex((c) => c.id === client.id);
+      let nextClients = [...prev.clients];
+      if (existingIdx >= 0) {
+        nextClients[existingIdx] = client;
+      } else {
+        nextClients.push(client);
+      }
+      const nextDb: AppDatabase = { ...prev, clients: nextClients };
+      try {
+        await saveDatabase(nextDb);
+        commitDb(nextDb);
+      } catch {
+        showToast('Could not save customer');
+      }
+    },
+    [commitDb, showToast]
+  );
+
   const handleSaveClient = useCallback(
-    (client: Client) => {
-      setDb((prev) => {
-        const existingIdx = prev.clients.findIndex((c) => c.id === client.id);
-        let nextClients = [...prev.clients];
-        if (existingIdx >= 0) {
-          nextClients[existingIdx] = client;
-        } else {
-          nextClients.push(client);
-        }
-        const nextDb: AppDatabase = { ...prev, clients: nextClients };
-        saveDatabase(nextDb);
-        return nextDb;
-      });
+    async (client: Client) => {
+      await persistClient(client);
       setIsNewClientModalOpen(false);
       setEditingClient(null);
     },
-    []
+    [persistClient]
   );
 
   const handleDeleteClient = useCallback(
     (id: string, name: string) => {
+      if (!db) return;
       const hasInvoices = db.invoices.some((inv) => inv.cid === id);
       if (hasInvoices) {
         showToast(`Cannot delete "${name}" because they have existing invoices`);
@@ -113,52 +201,92 @@ export default function App() {
       }
       setClientToDelete({ id, name });
     },
-    [db.invoices, showToast]
+    [db, showToast]
   );
 
   // Payment Recording
   const handleRecordPayment = useCallback(
-    (invoiceId: string, payment: PaymentRecord) => {
-      setDb((prev) => {
-        const nextInvoices = prev.invoices.map((inv) => {
-          if (inv.id === invoiceId) {
-            return {
-              ...inv,
-              pay: [...(inv.pay || []), payment]
-            };
-          }
-          return inv;
-        });
-        const nextDb: AppDatabase = { ...prev, invoices: nextInvoices };
-        saveDatabase(nextDb);
-        return nextDb;
+    async (invoiceId: string, payment: PaymentRecord) => {
+      const prev = dbRef.current;
+      if (!prev) return;
+      const target = prev.invoices.find((inv) => inv.id === invoiceId);
+      if (target?.voided) {
+        showToast('Cannot record payment on a voided invoice');
+        return;
+      }
+      const nextInvoices = prev.invoices.map((inv) => {
+        if (inv.id === invoiceId) {
+          return {
+            ...inv,
+            pay: [...(inv.pay || []), payment]
+          };
+        }
+        return inv;
       });
-      setRecordPaymentForInvoice(null);
-      setIsGenericPaymentModalOpen(false);
+      const nextDb: AppDatabase = { ...prev, invoices: nextInvoices };
+      try {
+        await saveDatabase(nextDb);
+        commitDb(nextDb);
+        setRecordPaymentForInvoice(null);
+        setIsGenericPaymentModalOpen(false);
+      } catch {
+        showToast('Could not save payment');
+      }
     },
-    []
+    [commitDb, showToast]
   );
 
   // Settings
-  const handleUpdateSettings = useCallback((newSettings: CompanySettings) => {
-    setDb((prev) => {
+  const handleUpdateSettings = useCallback(
+    async (newSettings: CompanySettings) => {
+      const prev = dbRef.current;
+      if (!prev) return;
       const nextDb: AppDatabase = { ...prev, settings: newSettings };
-      saveDatabase(nextDb);
-      return nextDb;
-    });
-  }, []);
+      try {
+        await saveDatabase(nextDb);
+        commitDb(nextDb);
+      } catch {
+        showToast('Could not save settings');
+      }
+    },
+    [commitDb, showToast]
+  );
 
-  const handleResetData = useCallback(() => {
-    const fresh = resetDatabase();
-    setDb(fresh);
-    setCurrentView('overview');
-  }, []);
+  const handleResetData = useCallback(async () => {
+    try {
+      const fresh = await resetDatabase();
+      commitDb(fresh);
+      setCurrentView('overview');
+    } catch {
+      showToast('Could not reset database');
+    }
+  }, [commitDb, showToast]);
 
-  const handleImportData = useCallback((imported: AppDatabase) => {
-    setDb(imported);
-    saveDatabase(imported);
-    setCurrentView('overview');
-  }, []);
+  /** Confirmed restore from Settings (file or recovery key). Snapshots current DB first. */
+  const handleImportData = useCallback(
+    async (imported: AppDatabase, sourceLabel: string = 'file') => {
+      if (!isLoggedIn()) {
+        showToast('Sign in required to import data');
+        throw new Error('AUTH_REQUIRED');
+      }
+      try {
+        const result = await restoreFromDatabase(imported, true, sourceLabel);
+        commitDb(result.db);
+        setDbLoadError(null);
+        setCurrentView('overview');
+      } catch (err) {
+        if (err instanceof Error && err.message === 'DUPLICATE_INVOICE_NO') {
+          showToast('Import blocked — backup contains unresolved duplicate invoice numbers');
+        } else if (err instanceof Error && err.message === 'RESTORE_NOT_CONFIRMED') {
+          showToast('Restore cancelled — confirmation required');
+        } else {
+          showToast('Import failed — current data was not replaced');
+        }
+        throw err;
+      }
+    },
+    [commitDb, showToast]
+  );
 
   // Keyboard shortcut listener
   useEffect(() => {
@@ -172,6 +300,7 @@ export default function App() {
         setRecordPaymentForInvoice(null);
         setIsGenericPaymentModalOpen(false);
         setInvoiceToDelete(null);
+        setInvoiceToVoid(null);
         setClientToDelete(null);
       }
     };
@@ -179,16 +308,92 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Pending count for sidebar badge
+  // Pending count for sidebar badge (voided invoices excluded)
   const pendingCount = useMemo(() => {
-    return db.invoices.filter((i) => calculateInvoice(i, db.settings.rate).bal > 0.05).length;
-  }, [db.invoices, db.settings.rate]);
+    if (!db) return 0;
+    return db.invoices.filter(
+      (i) => !i.voided && calculateInvoice(i, db.settings.rate).bal > 0.05
+    ).length;
+  }, [db]);
 
   // Client for print modal
   const printClient = useMemo(() => {
-    if (!activeInvoiceForPrint) return undefined;
+    if (!db || !activeInvoiceForPrint) return undefined;
     return db.clients.find((c) => c.id === activeInvoiceForPrint.cid);
-  }, [activeInvoiceForPrint, db.clients]);
+  }, [activeInvoiceForPrint, db]);
+
+  const handleLogout = useCallback(() => {
+    clearSession();
+    setAuthed(false);
+    dbRef.current = null;
+    setDb(null);
+    setDbLoadError(null);
+    setCurrentView('overview');
+    setActiveInvoiceForPrint(null);
+    setIsInvoiceModalOpen(false);
+  }, []);
+
+  const handleRequestRemoveInvoice = useCallback(
+    (id: string) => {
+      if (!db) return;
+      const target = db.invoices.find((i) => i.id === id);
+      if (!target) return;
+      if (target.voided) {
+        showToast('Invoice is already voided');
+        return;
+      }
+      if (target.finalized) {
+        setVoidReason('');
+        setInvoiceToVoid(target);
+        return;
+      }
+      setInvoiceToDelete(target);
+    },
+    [db, showToast]
+  );
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen w-screen flex items-center justify-center bg-[#F5F7FA] text-slate-600 text-sm">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return (
+      <LoginView
+        onSuccess={() => {
+          void (async () => {
+            setAuthed(true);
+            try {
+              await tryLoadDatabase();
+            } catch {
+              clearSession();
+              setAuthed(false);
+            }
+          })();
+        }}
+      />
+    );
+  }
+
+  if (dbLoadError || !db) {
+    return (
+      <DatabaseRecoveryView
+        error={
+          dbLoadError ||
+          new DatabaseLoadError('SHAPE_FAIL', 'srk_enterprises_billing_db_v2')
+        }
+        onRestored={(restored) => {
+          commitDb(restored);
+          setDbLoadError(null);
+          showToast('Database restored');
+        }}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#F5F7FA] font-sans text-[#081C2D] antialiased selection:bg-[#1F7A63]/20">
@@ -204,6 +409,7 @@ export default function App() {
         }}
         pendingCount={pendingCount}
         customLogoUrl={db.settings.logoUrl}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -250,6 +456,7 @@ export default function App() {
             <DailyBoxBillingView
               db={db}
               onSaveInvoice={handleSaveInvoice}
+              onSaveClient={persistClient}
               onOpenNewClientModal={() => {
                 setEditingClient(null);
                 setIsNewClientModalOpen(true);
@@ -267,11 +474,14 @@ export default function App() {
               db={db}
               onCreateInvoice={() => setCurrentView('box_billing')}
               onViewInvoice={(inv) => setActiveInvoiceForPrint(inv)}
-              onDeleteInvoice={(id) => {
-                const target = db.invoices.find((i) => i.id === id);
-                if (target) setInvoiceToDelete(target);
+              onDeleteInvoice={handleRequestRemoveInvoice}
+              onRecordPayment={(inv) => {
+                if (inv.voided) {
+                  showToast('Cannot record payment on a voided invoice');
+                  return;
+                }
+                setRecordPaymentForInvoice(inv);
               }}
-              onRecordPayment={(inv) => setRecordPaymentForInvoice(inv)}
             />
           )}
 
@@ -322,6 +532,10 @@ export default function App() {
               onUpdateSettings={handleUpdateSettings}
               onResetData={handleResetData}
               onImportData={handleImportData}
+              onDatabaseReplaced={(restored) => {
+                commitDb(restored);
+                setDbLoadError(null);
+              }}
               showToast={showToast}
             />
           )}
@@ -336,6 +550,10 @@ export default function App() {
           settings={db.settings}
           onClose={() => setActiveInvoiceForPrint(null)}
           onEdit={(inv) => {
+            if (inv.finalized) {
+              showToast('This invoice is finalized and cannot be edited');
+              return;
+            }
             setActiveInvoiceForPrint(null);
             setEditingInvoice(inv);
             setIsInvoiceModalOpen(true);
@@ -390,29 +608,131 @@ export default function App() {
         />
       )}
 
-      {/* Invoice Delete Confirmation Modal */}
+      {/* Draft invoice hard-delete (non-finalized only) */}
       <ConfirmModal
         isOpen={!!invoiceToDelete}
         title={`Delete Invoice ${invoiceToDelete?.no}?`}
-        message={`Are you sure you want to permanently delete invoice ${invoiceToDelete?.no}? Associated payment logs will also be removed.`}
+        message={`Are you sure you want to permanently delete draft invoice ${invoiceToDelete?.no}? Finalized invoices cannot be deleted — void them instead.`}
         confirmLabel="Delete Invoice"
         cancelLabel="Cancel"
         isDestructive={true}
         onConfirm={() => {
           if (invoiceToDelete) {
+            if (invoiceToDelete.finalized) {
+              showToast('Finalized invoices cannot be deleted — use Void');
+              setInvoiceToDelete(null);
+              return;
+            }
             const id = invoiceToDelete.id;
             const no = invoiceToDelete.no;
-            setDb((prev) => {
-              const nextDb = { ...prev, invoices: prev.invoices.filter((i) => i.id !== id) };
-              saveDatabase(nextDb);
-              return nextDb;
+            const prev = dbRef.current;
+            if (!prev) return;
+            let nextDb: AppDatabase = {
+              ...prev,
+              invoices: prev.invoices.filter((i) => i.id !== id)
+            };
+            nextDb = recordAudit(nextDb, {
+              action: 'invoice_delete',
+              invoiceId: id,
+              invoiceNo: no,
+              detail: 'Draft invoice permanently deleted'
             });
-            showToast(`Invoice ${no} deleted`);
-            setInvoiceToDelete(null);
+            void (async () => {
+              try {
+                await saveDatabase(nextDb);
+                commitDb(nextDb);
+                showToast(`Invoice ${no} deleted`);
+              } catch {
+                showToast('Could not delete invoice');
+              } finally {
+                setInvoiceToDelete(null);
+              }
+            })();
           }
         }}
         onCancel={() => setInvoiceToDelete(null)}
       />
+
+      {/* Finalized invoice void (controlled cancellation with audit trail) */}
+      {invoiceToVoid && (
+        <div className="fixed inset-0 z-80 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm border border-slate-200 p-5 space-y-4">
+            <h3 className="font-bold text-slate-900 text-sm m-0">Void invoice {invoiceToVoid.no}?</h3>
+            <p className="text-xs text-slate-600 m-0 leading-relaxed">
+              Finalized invoices cannot be permanently deleted. Voiding keeps the record for financial
+              history and marks it cancelled.
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Reason (required)</label>
+              <textarea
+                value={voidReason}
+                onChange={(e) => setVoidReason(e.target.value)}
+                rows={3}
+                placeholder="e.g. Issued in error / customer cancelled"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:outline-teal-600 resize-none"
+              />
+            </div>
+            <div className="pt-1 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setInvoiceToVoid(null);
+                  setVoidReason('');
+                }}
+                className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const reason = voidReason.trim();
+                  if (reason.length < 3) {
+                    showToast('Enter a void reason (at least 3 characters)');
+                    return;
+                  }
+                  const target = invoiceToVoid;
+                  const prev = dbRef.current;
+                  if (!prev) return;
+                  const nextInvoices = prev.invoices.map((inv) =>
+                    inv.id === target.id
+                      ? {
+                          ...inv,
+                          voided: true,
+                          voidReason: reason,
+                          voidedAt: new Date().toISOString(),
+                          voidedBy: 'desk'
+                        }
+                      : inv
+                  );
+                  let nextDb: AppDatabase = { ...prev, invoices: nextInvoices };
+                  nextDb = recordAudit(nextDb, {
+                    action: 'invoice_void',
+                    invoiceId: target.id,
+                    invoiceNo: target.no,
+                    reason
+                  });
+                  void (async () => {
+                    try {
+                      await saveDatabase(nextDb);
+                      commitDb(nextDb);
+                      showToast(`Invoice ${target.no} voided`);
+                    } catch {
+                      showToast('Could not void invoice');
+                    } finally {
+                      setInvoiceToVoid(null);
+                      setVoidReason('');
+                    }
+                  })();
+                }}
+                className="px-3.5 py-2 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+              >
+                Void invoice
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Client Delete Confirmation Modal */}
       <ConfirmModal
@@ -424,13 +744,24 @@ export default function App() {
         isDestructive={true}
         onConfirm={() => {
           if (clientToDelete) {
-            setDb((prev) => {
-              const nextDb = { ...prev, clients: prev.clients.filter((c) => c.id !== clientToDelete.id) };
-              saveDatabase(nextDb);
-              return nextDb;
-            });
-            showToast(`Client "${clientToDelete.name}" deleted`);
-            setClientToDelete(null);
+            const prev = dbRef.current;
+            if (!prev) return;
+            const nextDb = {
+              ...prev,
+              clients: prev.clients.filter((c) => c.id !== clientToDelete.id)
+            };
+            const name = clientToDelete.name;
+            void (async () => {
+              try {
+                await saveDatabase(nextDb);
+                commitDb(nextDb);
+                showToast(`Client "${name}" deleted`);
+              } catch {
+                showToast('Could not delete customer');
+              } finally {
+                setClientToDelete(null);
+              }
+            })();
           }
         }}
         onCancel={() => setClientToDelete(null)}
@@ -458,6 +789,8 @@ function QuickAddClientModal({ initialClient, onClose, onSave }: QuickAddClientM
   const [phone, setPhone] = useState(initialClient?.phone || '');
   const [addr, setAddr] = useState(initialClient?.addr || '');
   const [gst, setGst] = useState(initialClient?.gst || '');
+  const [state, setState] = useState(initialClient?.state || 'Karnataka');
+  const [pin, setPin] = useState(initialClient?.pin || '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -468,7 +801,8 @@ function QuickAddClientModal({ initialClient, onClose, onSave }: QuickAddClientM
       phone: phone.trim(),
       addr: addr.trim(),
       gst: gst.trim().toUpperCase(),
-      state: initialClient?.state || 'Karnataka',
+      state: state.trim() || 'Karnataka',
+      pin: pin.trim(),
       createdAt: initialClient?.createdAt || new Date().toISOString().slice(0, 10)
     };
     onSave(client);
@@ -531,6 +865,28 @@ function QuickAddClientModal({ initialClient, onClose, onSave }: QuickAddClientM
               placeholder="29AAAAA0000A1Z5"
               className="w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-slate-900 font-mono focus:outline-teal-600 text-xs"
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">State</label>
+              <input
+                type="text"
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                className="w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-teal-600 text-xs"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">PIN</label>
+              <input
+                type="text"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="560001"
+                className="w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-slate-900 font-mono focus:outline-teal-600 text-xs"
+              />
+            </div>
           </div>
 
           <div className="pt-2 flex justify-end gap-2">

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>SRK Enterprises — Sample Tax Invoice</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; background: #fff; color: #0f172a; }
+    .page { width: 794px; min-height: 1123px; margin: 0 auto; padding: 40px 48px; }
+    .banner { background: #1F7A63; color: #fff; text-align: center; padding: 8px; font-weight: 700; letter-spacing: 0.04em; margin: 16px 0; }
+    .meta { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px; }
+    th { background: #f8fafc; text-align: left; }
+    .totals { margin-top: 16px; width: 280px; margin-left: auto; font-size: 13px; }
+    .totals .row { display: flex; justify-content: space-between; padding: 4px 0; }
+    .totals .grand { font-weight: 700; border-top: 1px solid #94a3b8; margin-top: 6px; padding-top: 8px; }
+    .bank { margin-top: 28px; font-size: 12px; color: #334155; }
+    .auth-outer { margin-top: 56px; padding-top: 24px; display: flex; justify-content: flex-end; }
+    .auth { width: 250px; display: flex; flex-direction: column; }
+    .for { margin: 0; font-size: 14px; font-weight: 600; text-align: right; line-height: 1.25; }
+    .sig-wrap { margin-top: 16px; width: 100%; display: flex; justify-content: center; }
+    .sig-wrap img { height: 72px; width: auto; max-width: 230px; object-fit: contain; display: block; }
+    .line { margin-top: 12px; width: 100%; border-bottom: 1px solid #94a3b8; }
+    .label { margin: 8px 0 0; width: 100%; text-align: center; font-size: 14px; font-weight: 700; line-height: 1.25; }
+    .footer { margin-top: 40px; text-align: center; color: #94a3b8; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div>
+        <div style="font-size:22px;font-weight:800;color:#081C2D;">SRK Enterprises</div>
+        <div style="font-size:12px;color:#475569;margin-top:4px;">Water can supply · Bangalore</div>
+      </div>
+      <div style="text-align:right;font-size:12px;color:#334155;">
+        <div><b>Invoice No:</b> SRK-2026-0042</div>
+        <div><b>Date:</b> 14-10-2026</div>
+        <div><b>PO:</b> PO-7781</div>
+      </div>
+    </div>
+    <div class="banner">TAX INVOICE</div>
+    <div class="meta">
+      <div>
+        <div style="font-weight:700;margin-bottom:4px;">Bill To</div>
+        Sample Customer Pvt Ltd<br/>
+        12 MG Road, Bangalore – 560001<br/>
+        Phone: 9876543210
+      </div>
+      <div style="text-align:right;">
+        <div><b>Payment:</b> UPI</div>
+        <div><b>Status:</b> Fully Paid</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>20L Water Can</td><td>10</td><td>100.00</td><td>1,000.00</td></tr>
+        <tr><td>2</td><td>10L Water Can</td><td>5</td><td>110.00</td><td>550.00</td></tr>
+        <tr><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td></td><td></td><td></td><td></td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="totals">
+      <div class="row"><span>Subtotal</span><span>₹1,550.00</span></div>
+      <div class="row grand"><span>Total</span><span>₹1,550.00</span></div>
+    </div>
+    <div class="bank">
+      <div style="font-weight:700;margin-bottom:4px;">Bank details</div>
+      DBS Bank · A/C 1234567890 · IFSC DBSS0IN0811
+    </div>
+    <div class="auth-outer">
+      <div class="auth">
+        <div class="for">For SRK Enterprises</div>
+        <div class="sig-wrap">
+          <img src="./src/assets/images/srk_signature_transparent.png" alt="signature" />
+        </div>
+        <div class="line"></div>
+        <div class="label">Authorized Signature</div>
+      </div>
+    </div>
+    <div class="footer">This is a computer-generated tax invoice.</div>
+  </div>
+</body>
+</html>

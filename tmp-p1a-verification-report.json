@@ -1,0 +1,203 @@
+{
+  "passed": 33,
+  "failed": 3,
+  "notVerified": 2,
+  "notApplicable": 1,
+  "results": [
+    {
+      "id": "ARCH-01",
+      "status": "PASSED",
+      "detail": "Storage engine is browser localStorage JSON (not IndexedDB, not SQLite). Keys: live=srk_enterprises_billing_db_v2, test=srk_enterprises_billing_db_TEST_p0, pre-mig backup=srk_enterprises_billing_db_v2_backup_pre_p0_v3"
+    },
+    {
+      "id": "ARCH-02",
+      "status": "PASSED",
+      "detail": "This harness uses an in-memory Map mock — zero access to a real browser profile or live desk data."
+    },
+    {
+      "id": "ISO-01",
+      "status": "PASSED",
+      "detail": "Live DB key remains absent in mock after test migrate: true"
+    },
+    {
+      "id": "ISO-02",
+      "status": "FAILED",
+      "detail": "CONFIRMED ISSUE: migrating TEST_KEY writes pre-migration backup to LIVE backup key name (srk_enterprises_billing_db_v2_backup_pre_p0_v3). Different key name for the DB is NOT sufficient isolation for backups in a real browser."
+    },
+    {
+      "id": "ISO-03",
+      "status": "PASSED",
+      "detail": "With namespaced backup key, test backup is isolated from live backup key name"
+    },
+    {
+      "id": "MIG-01",
+      "status": "PASSED",
+      "detail": "Pre-migration backup equals exact pre-migrate JSON bytes"
+    },
+    {
+      "id": "MIG-02",
+      "status": "PASSED",
+      "detail": "Migrated DB schemaVersion=3"
+    },
+    {
+      "id": "MIG-03",
+      "status": "PASSED",
+      "detail": "Legacy duplicates recorded without renumbering: [\"SRK-0001\"]; invoices still SRK-0001,SRK-0001"
+    },
+    {
+      "id": "MIG-04",
+      "status": "PASSED",
+      "detail": "Existing invoice numbers unchanged after migrate"
+    },
+    {
+      "id": "MIG-05",
+      "status": "PASSED",
+      "detail": "nextSeq synced past max used: 2"
+    },
+    {
+      "id": "MIG-06",
+      "status": "PASSED",
+      "detail": "Pre-migration backup not overwritten on subsequent migrate attempts"
+    },
+    {
+      "id": "BKP-01",
+      "status": "PASSED",
+      "detail": "Exported backup JSON contains sensitive fields: accountNo, ifsc, gst, pan, customerName, signature"
+    },
+    {
+      "id": "BKP-02",
+      "status": "PASSED",
+      "detail": "Access control today: export only from authenticated Settings UI; file is plaintext on disk with OS file permissions only (no app encryption)."
+    },
+    {
+      "id": "BKP-03",
+      "status": "PASSED",
+      "detail": "Restore restores customer records"
+    },
+    {
+      "id": "BKP-04",
+      "status": "PASSED",
+      "detail": "Restore preserves finalized buyer/seller snapshots"
+    },
+    {
+      "id": "BKP-05",
+      "status": "PASSED",
+      "detail": "Restore preserves bank details, signature URL, products"
+    },
+    {
+      "id": "BKP-06",
+      "status": "PASSED",
+      "detail": "Restore preserves payment records"
+    },
+    {
+      "id": "BKP-07",
+      "status": "PASSED",
+      "detail": "Pre-migration backup is pre-v3 snapshot (no schemaVersion meta)"
+    },
+    {
+      "id": "BKP-08",
+      "status": "NOT VERIFIED",
+      "detail": "App has no UI to restore from localStorage key srk_enterprises_billing_db_v2_backup_pre_p0_v3; only Settings file import. Manual DevTools restore not exercised in a real browser this run."
+    },
+    {
+      "id": "PER-01",
+      "status": "PASSED",
+      "detail": "Customer rename persists across restart"
+    },
+    {
+      "id": "PER-02",
+      "status": "PASSED",
+      "detail": "Product qty persists"
+    },
+    {
+      "id": "PER-03",
+      "status": "PASSED",
+      "detail": "Company settings + bank details persist"
+    },
+    {
+      "id": "PER-04",
+      "status": "PASSED",
+      "detail": "Signature setting persists"
+    },
+    {
+      "id": "PER-05",
+      "status": "PASSED",
+      "detail": "Payments persist"
+    },
+    {
+      "id": "PER-06",
+      "status": "PASSED",
+      "detail": "Finalized seller snapshot frozen despite settings change"
+    },
+    {
+      "id": "PER-07",
+      "status": "PASSED",
+      "detail": "Second invoice snapshot independently preserved"
+    },
+    {
+      "id": "INT-01",
+      "status": "PASSED",
+      "detail": "New duplicate numbers blocked; storage unchanged (rollback)"
+    },
+    {
+      "id": "INT-02",
+      "status": "PASSED",
+      "detail": "Legacy duplicates remain loadable after restart"
+    },
+    {
+      "id": "INT-03",
+      "status": "PASSED",
+      "detail": "Finalized line-item edit remains locked after restart"
+    },
+    {
+      "id": "INT-04",
+      "status": "PASSED",
+      "detail": "Void persists with snapshots intact after restart write"
+    },
+    {
+      "id": "REC-01",
+      "status": "FAILED",
+      "detail": "ISSUE: corrupt JSON causes getDatabase() to seed INITIAL_* and persistUnlocked — overwrites corrupt key without copying it to a recovery backup first"
+    },
+    {
+      "id": "REC-02",
+      "status": "FAILED",
+      "detail": "ISSUE: invalid shape (no invoices array) also falls through to seed overwrite — original payload is lost; no automatic salvage backup"
+    },
+    {
+      "id": "REC-03",
+      "status": "PASSED",
+      "detail": "Failed duplicate write leaves prior DB bytes unchanged"
+    },
+    {
+      "id": "REC-04",
+      "status": "PASSED",
+      "detail": "persistUnlocked surfaces storage write failures to caller (throw)"
+    },
+    {
+      "id": "SEN-01",
+      "status": "PASSED",
+      "detail": "Backup/export payload includes sensitive business data fields (accountNo, ifsc, upiId, gst, pan, phone, signatureUrl, name)"
+    },
+    {
+      "id": "SEN-02",
+      "status": "PASSED",
+      "detail": "No password hash is in AppDatabase export (auth meta is a separate localStorage key) — verified by schema: export is JSON.stringify(db) only"
+    },
+    {
+      "id": "SEN-03",
+      "status": "PASSED",
+      "detail": "Access control: (1) UI export requires logged-in session (2) downloaded file has no passphrase (3) OS user / anyone with the file can read it (4) pre-mig localStorage backup readable by any script on the origin"
+    },
+    {
+      "id": "LIVE-01",
+      "status": "NOT VERIFIED",
+      "detail": "Real Chromium/Edge profile restart with the running Vite app was not executed in this pass (verification stage forbids live DB use). Persistence semantics verified via storage re-read model above."
+    },
+    {
+      "id": "LIVE-02",
+      "status": "NOT APPLICABLE",
+      "detail": "IndexedDB / SQLite / Electron userData paths — not used by this application."
+    }
+  ]
+}

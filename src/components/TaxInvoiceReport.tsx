@@ -3,6 +3,7 @@ import { Invoice, Client, CompanySettings } from '../types/billing';
 import { calculateInvoice, formatDateDisplay, money, formatNumber } from '../utils/formatters';
 import { numberToIndianWords } from '../utils/numberToWords';
 import { BrandLogo } from './BrandLogo';
+import signatureImg from '../assets/images/srk_signature_transparent.png';
 import { Printer, X, Download, Share2, Check, Copy } from 'lucide-react';
 
 interface TaxInvoiceReportProps {
@@ -22,16 +23,41 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
   onEdit,
   isModal = true
 }) => {
-  const calc = calculateInvoice(invoice, settings.rate);
+  // Prefer frozen snapshots so historical invoices stay stable if settings change
+  const seller = invoice.sellerSnapshot;
+  const buyer = invoice.buyerSnapshot;
+  const companyName = seller?.name || settings.name || 'SRK Enterprises';
+  const companyAddr = seller?.addr || settings.addr;
+  const companyPhone = seller?.phone || settings.phone;
+  const companyEmail = seller?.email || settings.email;
+  const companyGst = seller?.gst || settings.gst;
+  const companyPan = seller?.pan || settings.pan;
+  const bankName = seller?.bankName || settings.bankName;
+  const accountNo = seller?.accountNo || settings.accountNo;
+  const ifsc = seller?.ifsc || settings.ifsc;
+  const branch = seller?.branch || settings.branch;
+  const upiId = seller?.upiId || settings.upiId;
+  const logoUrl = seller?.logoUrl || settings.logoUrl;
+  const sigSrc = seller?.signatureUrl || settings.signatureUrl || signatureImg;
+
+  const buyerName = buyer?.name || client?.name || '—';
+  const buyerAddr = buyer?.addr || client?.addr || '—';
+  const buyerGst = buyer?.gst || client?.gst || 'Unregistered';
+  const buyerPhone = buyer?.phone || invoice.customerPhone || client?.phone || '—';
+  const buyerState = buyer?.state || invoice.state || client?.state || 'Karnataka';
+  const buyerPin = buyer?.pin || client?.pin || '';
+
+  const calc = calculateInvoice(invoice, invoice.gstRate ?? settings.rate);
   const [copied, setCopied] = React.useState(false);
   const printContainerRef = useRef<HTMLDivElement>(null);
+  const isFinalized = !!invoice.finalized;
 
   const handlePrint = () => {
     window.print();
   };
 
   const handleCopySummary = () => {
-    const text = `TAX INVOICE: ${invoice.no}\nClient: ${client?.name || 'Customer'}\nDate: ${formatDateDisplay(invoice.date)}\nTotal: ${money(calc.total)}\nStatus: ${calc.st}\nSRK Enterprises | +91 6362595002`;
+    const text = `TAX INVOICE: ${invoice.no}\nClient: ${buyerName}\nDate: ${formatDateDisplay(invoice.date)}\nTotal: ${money(calc.total)}\nStatus: ${calc.st}\n${companyName} | ${companyPhone}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -59,13 +85,18 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
             <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
           
-          {onEdit && (
+          {onEdit && !isFinalized && (
             <button
               onClick={() => onEdit(invoice)}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-white/95 text-slate-800 shadow-md hover:bg-white transition-all cursor-pointer border border-slate-200"
             >
               Edit
             </button>
+          )}
+          {isFinalized && (
+            <span className="px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-100">
+              Finalized
+            </span>
           )}
 
           <button
@@ -98,33 +129,31 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
         <div className="flex justify-between items-center text-xs font-semibold text-slate-800 pb-3 border-b border-slate-200">
           <div>
             <span>GSTIN: </span>
-            <span className="font-mono">{settings.gst || '29DLDPK4054H1Z0'}</span>
+            <span className="font-mono">{companyGst || '—'}</span>
           </div>
           <div>
             <span>PAN: </span>
-            <span className="font-mono">{settings.pan || 'DLDPK4054H'}</span>
+            <span className="font-mono">{companyPan || '—'}</span>
           </div>
         </div>
 
         {/* Company Header: Logo & Address */}
-        <div className="flex items-center gap-6 py-5 border-b border-slate-200">
-          <div className="shrink-0 w-[240px] flex items-center justify-center">
-            <BrandLogo size="invoice" customLogoUrl={settings.logoUrl} />
+        <div className="flex items-center gap-5 py-4 border-b border-slate-200">
+          <div className="shrink-0 w-[280px] h-[150px] flex items-center justify-center overflow-hidden">
+            <BrandLogo size="invoice" customLogoUrl={logoUrl} className="w-full h-full" />
           </div>
           <div className="flex-1 min-w-0 border-l border-slate-200 pl-6">
             <h1 className="text-xl sm:text-2xl font-extrabold text-[#081C2D] tracking-tight m-0 leading-tight">
-              {settings.name || 'SRK Enterprises'}
+              {companyName}
             </h1>
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#1F7A63] mt-1 m-0">
               Pure Water · Reliable Supply
             </p>
-            <p className="text-slate-600 text-xs sm:text-[12.5px] mt-2.5 leading-relaxed">
-              {settings.addr || 'No.41, MM Lane, Gangarapete, Bangalore North, Bangalore, Bangalore Corporation Building S.O, Karnataka, India - 560002'}
-            </p>
+            <p className="text-slate-600 text-xs sm:text-[12.5px] mt-2.5 leading-relaxed">{companyAddr}</p>
             <div className="text-slate-700 text-xs mt-2 font-medium flex flex-wrap gap-x-3 gap-y-1">
-              <span>Phone: {settings.phone || '+91 6362595002'}</span>
+              <span>Phone: {companyPhone || '—'}</span>
               <span className="text-slate-300">|</span>
-              <span>Email: {settings.email || 'srkenterprises.blr@gmail.com'}</span>
+              <span>Email: {companyEmail || '—'}</span>
             </div>
           </div>
         </div>
@@ -142,21 +171,19 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
           <div className="p-3 flex flex-col justify-between">
             <div>
               <div className="text-xs font-bold text-slate-900 mb-1">To</div>
-              <div className="font-bold text-sm text-slate-900">
-                {client?.name || '[Client name]'}
-              </div>
-              <div className="text-slate-600 text-xs mt-1 whitespace-pre-line leading-relaxed">
-                {client?.addr || '[Client address]'}
-              </div>
+              <div className="font-bold text-sm text-slate-900">{buyerName}</div>
+              <div className="text-slate-600 text-xs mt-1 whitespace-pre-line leading-relaxed">{buyerAddr}</div>
+              {buyerPin ? <div className="text-slate-600 text-xs mt-0.5">PIN: {buyerPin}</div> : null}
             </div>
-            <div className="mt-3 pt-2 border-t border-slate-200 text-xs">
-              <span className="text-slate-600 font-medium">GSTIN: </span>
-              <span className="font-mono font-semibold text-slate-800">
-                {client?.gst || invoice.cid ? (client?.gst || 'Unregistered') : '[Client GSTIN]'}
-              </span>
-              {client?.phone && (
-                <div className="text-slate-600 mt-0.5">Phone: {client.phone}</div>
-              )}
+            <div className="mt-3 pt-2 border-t border-slate-200 text-xs space-y-0.5">
+              <div>
+                <span className="text-slate-600 font-medium">GSTIN: </span>
+                <span className="font-mono font-semibold text-slate-800">{buyerGst || '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-600 font-medium">Phone: </span>
+                <span className="font-semibold text-slate-800">{buyerPhone}</span>
+              </div>
             </div>
           </div>
 
@@ -172,19 +199,21 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
             </div>
             <div className="grid grid-cols-2 p-1.5 px-3">
               <span className="font-bold text-slate-800 text-xs">PO No.</span>
-              <span className="text-slate-800 text-xs">{invoice.poNo || '[enter]'}</span>
+              <span className="text-slate-800 text-xs">{invoice.poNo?.trim() || '—'}</span>
             </div>
             <div className="grid grid-cols-2 p-1.5 px-3">
               <span className="font-bold text-slate-800 text-xs">PO Date</span>
-              <span className="text-slate-800 text-xs">{invoice.poDate ? formatDateDisplay(invoice.poDate) : '[enter]'}</span>
+              <span className="text-slate-800 text-xs">
+                {invoice.poDate ? formatDateDisplay(invoice.poDate) : '—'}
+              </span>
             </div>
             <div className="grid grid-cols-2 p-1.5 px-3">
               <span className="font-bold text-slate-800 text-xs">State</span>
-              <span className="text-slate-800 text-xs">{invoice.state || client?.state || 'Karnataka (29)'}</span>
+              <span className="text-slate-800 text-xs">{buyerState}</span>
             </div>
             <div className="grid grid-cols-2 p-1.5 px-3">
               <span className="font-bold text-slate-800 text-xs">HSN Code</span>
-              <span className="text-slate-800 text-xs">{invoice.hsnCode || settings.defaultHsn || '[enter]'}</span>
+              <span className="text-slate-800 text-xs">{invoice.hsnCode || settings.defaultHsn || '—'}</span>
             </div>
           </div>
         </div>
@@ -246,28 +275,28 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
               <div className="text-slate-700 space-y-1">
                 <div>
                   <span className="font-semibold text-slate-800">Bank name: </span>
-                  <span>{settings.bankName || '[enter]'}</span>
+                  <span>{bankName || '—'}</span>
                 </div>
                 <div>
                   <span className="font-semibold text-slate-800">A/c no.: </span>
-                  <span className="font-mono font-medium">{settings.accountNo || '[enter]'}</span>
+                  <span className="font-mono font-medium">{accountNo || '—'}</span>
                 </div>
                 <div>
                   <span className="font-semibold text-slate-800">IFSC: </span>
-                  <span className="font-mono font-medium">{settings.ifsc || '[enter]'}</span>
+                  <span className="font-mono font-medium">{ifsc || '—'}</span>
                 </div>
-                {settings.branch && (
+                {branch ? (
                   <div>
                     <span className="font-semibold text-slate-800">Branch: </span>
-                    <span>{settings.branch}</span>
+                    <span>{branch}</span>
                   </div>
-                )}
-                {settings.upiId && (
+                ) : null}
+                {upiId ? (
                   <div>
                     <span className="font-semibold text-slate-800">UPI ID: </span>
-                    <span className="font-mono">{settings.upiId}</span>
+                    <span className="font-mono">{upiId}</span>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 
@@ -347,22 +376,33 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
           </div>
         )}
 
-        {/* Signatures & Footer Note */}
-        <div className="mt-8 flex justify-between items-end pt-4">
-          <div className="text-center w-full">
-            <div className="text-right pr-4">
-              <div className="font-bold text-slate-900 text-xs">For {settings.name || 'SRK Enterprises'}</div>
-              <div className="h-12 flex items-center justify-end">
-                <span className="text-[11px] text-slate-400 italic font-mono">[Authorized Signatory]</span>
+        {/* Authorization block — right aligned, stacked in document flow (no absolute/negative margins) */}
+        <div className="mt-14 pt-6 print:break-inside-avoid">
+          <div className="flex justify-end">
+            <div className="w-[250px] flex flex-col items-stretch">
+              <p className="m-0 text-sm font-semibold text-slate-900 text-right leading-snug">
+                For {companyName}
+              </p>
+
+              <div className="mt-4 w-full flex justify-center">
+                <img
+                  src={sigSrc}
+                  alt="Authorized handwritten signature"
+                  className="h-[72px] w-auto max-w-[230px] object-contain object-center select-none pointer-events-none block"
+                  draggable={false}
+                />
               </div>
-              <div className="text-xs font-semibold text-slate-700 border-t border-slate-300 inline-block pt-1 pl-4">
-                Digital Signature
-              </div>
+
+              <div className="mt-3 w-full border-b border-slate-400" aria-hidden="true" />
+
+              <p className="m-0 mt-2 w-full text-sm font-bold text-slate-900 text-center leading-snug">
+                Authorized Signature
+              </p>
             </div>
-            
-            <div className="mt-8 text-center text-[11px] text-slate-400">
-              This is a computer-generated tax invoice.
-            </div>
+          </div>
+
+          <div className="mt-10 text-center text-[11px] text-slate-400">
+            This is a computer-generated tax invoice.
           </div>
         </div>
       </div>

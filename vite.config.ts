@@ -5,6 +5,9 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Relative base keeps browser `vite`/`vite preview` working and allows
+    // Electron production loads via file:// (dist/index.html).
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

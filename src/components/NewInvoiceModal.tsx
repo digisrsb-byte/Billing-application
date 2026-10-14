@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { AppDatabase, Invoice, InvoiceItem, PaymentMode } from '../types/billing';
-import { calculateInvoice, money, formatNumber, todayISO, generateInvoiceNo } from '../utils/formatters';
+import { calculateInvoice, money, formatNumber, todayISO } from '../utils/formatters';
+import { allocateInvoiceNo } from '../services/invoiceIntegrity';
+import { buildBuyerSnapshotFromClient, buildSellerSnapshot } from '../utils/invoiceSnapshot';
 import { Plus, Trash2, X, Receipt, UserPlus, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface NewInvoiceModalProps {
@@ -56,7 +58,9 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
   const [notes, setNotes] = useState<string>(editingInvoice?.notes || '');
   const [showMore, setShowMore] = useState(false);
   const [error, setError] = useState('');
-  const previewNo = editingInvoice?.no || generateInvoiceNo(db.settings.invoicePrefix, db.settings.nextSeq);
+  const previewNo =
+    editingInvoice?.no ||
+    allocateInvoiceNo(db.settings.invoicePrefix, db.settings.nextSeq, db.invoices).no;
 
   const newId = () => 'it-' + Math.random().toString(36).slice(2, 8);
 
@@ -118,7 +122,9 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
     if (validItems.length === 0) return setError('Add at least one product with a name and a quantity above 0.');
     setError('');
 
-    const invoiceNo = editingInvoice?.no || generateInvoiceNo(db.settings.invoicePrefix, db.settings.nextSeq);
+    const invoiceNo =
+      editingInvoice?.no ||
+      allocateInvoiceNo(db.settings.invoicePrefix, db.settings.nextSeq, db.invoices).no;
     const payments = editingInvoice ? [...editingInvoice.pay] : [];
 
     if (!isEditing && mode !== 'Credit') {
@@ -134,6 +140,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
       }
     }
 
+    const selectedClient = db.clients.find((c) => c.id === clientId);
     const invoice: Invoice = {
       id: editingInvoice?.id || 'inv-' + Date.now().toString(36),
       no: invoiceNo,
@@ -146,12 +153,18 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
       isInterState,
       poNo: poNo.trim(),
       poDate: poDate.trim(),
+      customerPhone: selectedClient?.phone || editingInvoice?.customerPhone || '',
       state: state.trim(),
       hsnCode: hsnCode.trim(),
       mode,
       pay: payments,
       notes: notes.trim(),
-      createdAt: editingInvoice?.createdAt || new Date().toISOString()
+      createdAt: editingInvoice?.createdAt || new Date().toISOString(),
+      finalized: editingInvoice?.finalized ?? true,
+      buyerSnapshot:
+        editingInvoice?.buyerSnapshot ||
+        (selectedClient ? buildBuyerSnapshotFromClient(selectedClient) : undefined),
+      sellerSnapshot: editingInvoice?.sellerSnapshot || buildSellerSnapshot(db.settings)
     };
 
     onSave(invoice, openPrint);

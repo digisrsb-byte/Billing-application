@@ -232,14 +232,16 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                       <td className="py-3.5 px-6 text-center">
                         <span
                           className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                            calc.st === 'Paid'
+                            inv.voided
+                              ? 'bg-slate-200 text-slate-700'
+                              : calc.st === 'Paid'
                               ? 'bg-emerald-100 text-emerald-800'
                               : calc.st === 'Part paid'
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-rose-100 text-rose-800'
                           }`}
                         >
-                          {calc.st}
+                          {inv.voided ? 'Voided' : calc.st}
                         </span>
                       </td>
                       <td
@@ -255,7 +257,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
-                          {calc.bal > 0 && (
+                          {!inv.voided && calc.bal > 0 && (
                             <button
                               type="button"
                               onClick={() => onRecordPayment(inv)}
@@ -265,14 +267,16 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                               <CreditCard className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => onDeleteInvoice(inv.id)}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {!inv.voided && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteInvoice(inv.id)}
+                              className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title={inv.finalized ? 'Void invoice' : 'Delete draft'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

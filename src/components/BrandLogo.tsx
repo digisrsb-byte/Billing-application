@@ -23,7 +23,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       size === 'sm'
         ? 'h-12 w-auto max-w-[150px] object-contain'
         : size === 'invoice'
-        ? 'h-[7.5rem] w-auto max-w-[260px] object-contain'
+        ? 'w-full h-full object-contain object-center scale-[1.15]'
         : size === 'xl'
         ? 'h-28 w-auto max-w-[300px] object-contain'
         : size === 'lg'
@@ -33,7 +33,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     return (
       <div
         className={`inline-flex items-center justify-center overflow-hidden ${
-          size === 'lg' ? 'w-full h-full' : ''
+          size === 'lg' || size === 'invoice' ? 'w-full h-full' : ''
         } ${className}`}
       >
         <img

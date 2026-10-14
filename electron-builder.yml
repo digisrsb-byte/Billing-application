@@ -1,0 +1,27 @@
+appId: com.srkenterprises.billing
+productName: SRK Enterprises Billing
+copyright: Copyright © SRK Enterprises
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: SRK Enterprises Billing
