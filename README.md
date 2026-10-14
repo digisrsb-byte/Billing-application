@@ -1,20 +1,35 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# SRK Enterprises — Billing Application
 
-# Run and deploy your AI Studio app
+Desktop billing app for SRK Enterprises (water / can supply): create invoices, manage products & customers, track payments, and view simple sales reports.
 
-This contains everything you need to run your app locally.
+## Run locally
 
-View your app in AI Studio: https://ai.studio/apps/864ccfc6-8d92-4cf3-a9dc-799f000f5dd6
+**Prerequisites:** Node.js
 
-## Run Locally
+```bash
+npm install
+npm run dev
+```
 
-**Prerequisites:**  Node.js
+Open the URL shown in the terminal (usually `http://localhost:3000`).
 
+## Scripts
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start development server |
+| `npm run build` | Production build |
+| `npm run preview` | Preview production build |
+| `npm run lint` | Typecheck (`tsc --noEmit`) |
+
+## Features
+
+- **Billing** — quick invoice creation from product list
+- **Invoices** — view, print tax invoice, record payments
+- **Products** — prices & pack sizes (boxes and litre cans)
+- **Customers** — buyer directory
+- **Payments** — collection tracking
+- **Reports** — sales / payments / products charts
+- **Settings** — company, bank, GST defaults, backup
+
+Data is stored offline in the browser (`localStorage`).
