@@ -1,33 +1,44 @@
 /**
  * Desk authentication — PBKDF2-SHA256 password verification + signed session.
- * No plaintext password is stored in source. Bootstrap verifier matches the
- * existing administrator password so upgrades do not lock out the desk user.
+ * No plaintext password is stored in source.
+ *
+ * First-run: each installation creates its own administrator phone + password
+ * verifier via createAdministrator(). Existing installs keep whatever AuthMeta
+ * is already in localStorage (including legacy shared-bootstrap meta written by
+ * older builds) and continue to log in with that password — we never overwrite
+ * an existing verifier or invent a new default password.
  */
 
 const AUTH_META_KEY = 'srk_billing_auth_meta_v2';
 const SESSION_KEY = 'srk_billing_session_v2';
-/** Legacy flag from pre-P0 builds — never grants access; removed on migrate */
+/** Legacy flag from pre-P0 builds — never grants access; removed on sight */
 const LEGACY_AUTH_FLAG = 'srk_billing_auth_v1';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const PBKDF2_ITERATIONS = 210_000;
 const HASH_BYTES = 32;
-
-/** Public desk phone (username). Not a secret. */
-export const DESK_PHONE = '6362595002';
+const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * Bootstrap PBKDF2 verifier for the existing desk password.
- * Generated offline; plaintext password is not present in this module.
+ * Historical shared verifier (pre–first-run-setup builds).
+ * Kept ONLY for detecting/legacy test comparison — never written by current code.
+ * Older installs may already have this exact meta in localStorage; login still
+ * works against that stored copy. New installs never receive it.
  */
-const BOOTSTRAP_VERIFIER = {
+const LEGACY_SHARED_BOOTSTRAP_VERIFIER = {
   v: 2 as const,
-  phone: DESK_PHONE,
+  phone: '6362595002',
   algo: 'PBKDF2-SHA256' as const,
   iterations: PBKDF2_ITERATIONS,
   saltB64: 'Fqdhg5K0ax+VY0IHrocDzQ==',
   hashB64: '0o1k8t8u6UQR0aGR7NLcozYRuvQ2+MexY9AOkzaHJTg='
 };
+
+/** @deprecated Prefer LEGACY_SHARED_BOOTSTRAP_VERIFIER naming; export for tests */
+const BOOTSTRAP_VERIFIER = LEGACY_SHARED_BOOTSTRAP_VERIFIER;
+
+/** Suggested default desk phone shown on first-run setup (not a secret). */
+export const DESK_PHONE = '6362595002';
 
 export interface AuthMeta {
   v: 2;
@@ -87,7 +98,7 @@ async function pbkdf2(
     false,
     ['deriveBits']
   );
-  const saltBuf = new Uint8Array(salt); // copy for BufferSource typing compatibility
+  const saltBuf = new Uint8Array(salt);
   const bits = await crypto.subtle.deriveBits(
     {
       name: 'PBKDF2',
@@ -108,20 +119,28 @@ async function sha256B64(parts: string[]): Promise<string> {
   return bufToB64(digest);
 }
 
+function isValidAuthMeta(parsed: unknown): parsed is AuthMeta {
+  if (!parsed || typeof parsed !== 'object') return false;
+  const m = parsed as Record<string, unknown>;
+  return (
+    m.v === 2 &&
+    m.algo === 'PBKDF2-SHA256' &&
+    typeof m.phone === 'string' &&
+    typeof m.saltB64 === 'string' &&
+    m.saltB64.length > 0 &&
+    typeof m.hashB64 === 'string' &&
+    m.hashB64.length > 0 &&
+    typeof m.iterations === 'number' &&
+    m.iterations > 0
+  );
+}
+
 function readMeta(): AuthMeta | null {
   try {
     const raw = localStorage.getItem(AUTH_META_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as AuthMeta;
-    if (
-      parsed?.v === 2 &&
-      parsed.algo === 'PBKDF2-SHA256' &&
-      typeof parsed.saltB64 === 'string' &&
-      typeof parsed.hashB64 === 'string' &&
-      typeof parsed.iterations === 'number'
-    ) {
-      return parsed;
-    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (isValidAuthMeta(parsed)) return parsed;
   } catch {
     /* ignore */
   }
@@ -132,22 +151,7 @@ function writeMeta(meta: AuthMeta): void {
   localStorage.setItem(AUTH_META_KEY, JSON.stringify(meta));
 }
 
-/** Ensure a password verifier exists (bootstrap once; never stores plaintext). */
-export function ensureAuthBootstrap(): AuthMeta {
-  const existing = readMeta();
-  if (existing) return existing;
-  const meta: AuthMeta = { ...BOOTSTRAP_VERIFIER };
-  writeMeta(meta);
-  return meta;
-}
-
-/**
- * Safe migration from pre-P0 builds that only had a forgeable "1" flag.
- * Does not lock out the administrator: bootstrap verifier accepts the
- * existing desk password. Legacy flag never grants access.
- */
-export function migrateLegacyAuthFlag(): void {
-  ensureAuthBootstrap();
+function scrubLegacyFlag(): void {
   try {
     localStorage.removeItem(LEGACY_AUTH_FLAG);
   } catch {
@@ -155,10 +159,110 @@ export function migrateLegacyAuthFlag(): void {
   }
 }
 
-export async function verifyLogin(phone: string, password: string): Promise<boolean> {
-  const meta = ensureAuthBootstrap();
+/**
+ * True when this install has no administrator verifier yet.
+ * Does not write any meta. Forging LEGACY_AUTH_FLAG does not satisfy setup.
+ */
+export function needsAuthSetup(): boolean {
+  scrubLegacyFlag();
+  return readMeta() === null;
+}
+
+/**
+ * True when stored meta matches the historical shared bootstrap verifier
+ * (informative only — login still works; password change is a future feature).
+ */
+export function usesLegacySharedBootstrapVerifier(): boolean {
+  const meta = readMeta();
+  if (!meta) return false;
+  return (
+    meta.saltB64 === LEGACY_SHARED_BOOTSTRAP_VERIFIER.saltB64 &&
+    meta.hashB64 === LEGACY_SHARED_BOOTSTRAP_VERIFIER.hashB64 &&
+    meta.iterations === LEGACY_SHARED_BOOTSTRAP_VERIFIER.iterations
+  );
+}
+
+export type CreateAdministratorResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'ALREADY_INITIALIZED' | 'WEAK_PASSWORD' | 'PHONE_REQUIRED' | 'PASSWORD_MISMATCH';
+      message: string;
+    };
+
+/**
+ * First-run administrator creation. Generates a unique salt+hash per install.
+ * Refuses if AuthMeta already exists (upgrade / re-entry protection).
+ */
+export async function createAdministrator(
+  phone: string,
+  password: string,
+  passwordConfirm: string
+): Promise<CreateAdministratorResult> {
+  scrubLegacyFlag();
+
+  if (readMeta()) {
+    return {
+      ok: false,
+      reason: 'ALREADY_INITIALIZED',
+      message: 'Administrator is already set up. Sign in with your existing password.'
+    };
+  }
+
   const p = normalizePhone(phone);
-  if (p !== normalizePhone(meta.phone) || !password) return false;
+  if (!p || p.length < 10) {
+    return { ok: false, reason: 'PHONE_REQUIRED', message: 'Enter a valid phone number' };
+  }
+
+  if (!password || password.length < MIN_PASSWORD_LENGTH) {
+    return {
+      ok: false,
+      reason: 'WEAK_PASSWORD',
+      message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
+    };
+  }
+
+  if (password !== passwordConfirm) {
+    return { ok: false, reason: 'PASSWORD_MISMATCH', message: 'Passwords do not match' };
+  }
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await pbkdf2(password, salt, PBKDF2_ITERATIONS);
+  const meta: AuthMeta = {
+    v: 2,
+    phone: p,
+    algo: 'PBKDF2-SHA256',
+    iterations: PBKDF2_ITERATIONS,
+    saltB64: bufToB64(salt),
+    hashB64: bufToB64(hash)
+  };
+  writeMeta(meta);
+  await startSession(p);
+  return { ok: true };
+}
+
+/**
+ * @deprecated No longer seeds a shared verifier. Kept as a no-op read for older callers.
+ */
+export function ensureAuthBootstrap(): AuthMeta | null {
+  scrubLegacyFlag();
+  return readMeta();
+}
+
+/**
+ * Removes forgeable legacy flag. Never grants access and never seeds a password.
+ */
+export function migrateLegacyAuthFlag(): void {
+  scrubLegacyFlag();
+}
+
+export async function verifyLogin(phone: string, password: string): Promise<boolean> {
+  scrubLegacyFlag();
+  const meta = readMeta();
+  if (!meta || !password) return false;
+
+  const p = normalizePhone(phone);
+  if (p !== normalizePhone(meta.phone)) return false;
 
   const salt = b64ToBuf(meta.saltB64);
   const expected = b64ToBuf(meta.hashB64);
@@ -187,9 +291,13 @@ function readSession(): SessionRecord | null {
   }
 }
 
-/** Create a signed session after successful password verification. */
+/** Create a signed session after successful password verification or setup. */
 export async function startSession(phone: string): Promise<void> {
-  const meta = ensureAuthBootstrap();
+  const meta = readMeta();
+  if (!meta) {
+    sessionValidated = false;
+    throw new Error('AUTH_META_MISSING');
+  }
   const p = normalizePhone(phone);
   const exp = Date.now() + SESSION_TTL_MS;
   const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
@@ -197,11 +305,7 @@ export async function startSession(phone: string): Promise<void> {
   const mac = await buildSessionMac(p, exp, nonce, meta.hashB64);
   const session: SessionRecord = { v: 2, phone: p, exp, nonce, mac };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  try {
-    localStorage.removeItem(LEGACY_AUTH_FLAG);
-  } catch {
-    /* ignore */
-  }
+  scrubLegacyFlag();
   sessionValidated = true;
 }
 
@@ -209,7 +313,7 @@ export function clearSession(): void {
   sessionValidated = false;
   try {
     sessionStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(LEGACY_AUTH_FLAG);
+    scrubLegacyFlag();
   } catch {
     /* ignore */
   }
@@ -217,7 +321,7 @@ export function clearSession(): void {
 
 /** Cryptographic session validation for data-layer boundaries. */
 export async function assertAuthenticated(): Promise<void> {
-  migrateLegacyAuthFlag();
+  scrubLegacyFlag();
   const session = readSession();
   if (!session) {
     sessionValidated = false;
@@ -230,6 +334,7 @@ export async function assertAuthenticated(): Promise<void> {
   const meta = readMeta();
   if (!meta) {
     sessionValidated = false;
+    clearSession();
     throw new Error('AUTH_META_MISSING');
   }
   const phone = normalizePhone(session.phone);
@@ -259,11 +364,12 @@ export async function hydrateSession(): Promise<boolean> {
 }
 
 /**
- * Sync gate for React. True only after login or successful hydrateSession().
+ * Sync gate for React. True only after login/setup or successful hydrateSession().
  * Forging localStorage srk_billing_auth_v1=1 does NOT grant access.
+ * Missing AuthMeta does NOT auto-create a password.
  */
 export function isLoggedIn(): boolean {
-  migrateLegacyAuthFlag();
+  scrubLegacyFlag();
   if (!sessionValidated) return false;
   const session = readSession();
   if (!session) {
@@ -272,6 +378,10 @@ export function isLoggedIn(): boolean {
   }
   if (Date.now() > session.exp) {
     clearSession();
+    return false;
+  }
+  if (!readMeta()) {
+    sessionValidated = false;
     return false;
   }
   return true;
@@ -286,6 +396,10 @@ export function setLoggedIn(value: boolean): void {
 }
 
 export async function verifyAndStartSession(phone: string, password: string): Promise<boolean> {
+  if (needsAuthSetup()) {
+    clearSession();
+    return false;
+  }
   const ok = await verifyLogin(phone, password);
   if (!ok) {
     clearSession();
@@ -301,7 +415,10 @@ export const __authTest = {
   SESSION_KEY,
   LEGACY_AUTH_FLAG,
   BOOTSTRAP_VERIFIER,
+  LEGACY_SHARED_BOOTSTRAP_VERIFIER,
+  MIN_PASSWORD_LENGTH,
   normalizePhone,
+  readMeta,
   getSessionValidated: () => sessionValidated,
   setSessionValidated: (v: boolean) => {
     sessionValidated = v;

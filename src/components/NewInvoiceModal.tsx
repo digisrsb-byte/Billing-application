@@ -1,7 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AppDatabase, Invoice, InvoiceItem, PaymentMode } from '../types/billing';
 import { calculateInvoice, money, formatNumber, todayISO } from '../utils/formatters';
 import { allocateInvoiceNo } from '../services/invoiceIntegrity';
+import {
+  buildInitialPaymentRecord,
+  CreatePaymentChoice,
+  CreatePaymentMethod,
+  previewCreatePaymentAmounts,
+  resolveCreatePaymentPlan
+} from '../services/invoiceCreatePayment';
 import { buildBuyerSnapshotFromClient, buildSellerSnapshot } from '../utils/invoiceSnapshot';
 import { Plus, Trash2, X, Receipt, UserPlus, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -53,7 +60,8 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
     editingInvoice?.gstRate !== undefined ? editingInvoice.gstRate : db.settings.rate
   );
   const [isInterState, setIsInterState] = useState<boolean>(editingInvoice?.isInterState || false);
-  const [mode, setMode] = useState<PaymentMode>(editingInvoice?.mode || 'Cash');
+  const [paymentChoice, setPaymentChoice] = useState<CreatePaymentChoice>('later');
+  const [mode, setMode] = useState<CreatePaymentMethod>('Cash');
   const [receivedAmt, setReceivedAmt] = useState<string>('');
   const [notes, setNotes] = useState<string>(editingInvoice?.notes || '');
   const [showMore, setShowMore] = useState(false);
@@ -126,23 +134,44 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
       editingInvoice?.no ||
       allocateInvoiceNo(db.settings.invoicePrefix, db.settings.nextSeq, db.invoices).no;
     const payments = editingInvoice ? [...editingInvoice.pay] : [];
+    const invoiceId = editingInvoice?.id || 'inv-' + Date.now().toString(36);
 
-    if (!isEditing && mode !== 'Credit') {
-      const received = receivedAmt.trim() === '' ? calc.total : Number(receivedAmt) || 0;
-      if (received > 0) {
-        payments.push({
-          id: 'p-' + Math.random().toString(36).slice(2, 7),
-          date,
-          amt: received,
-          mode,
-          notes: 'Payment collected at invoice creation'
-        });
+    let invoiceMode: PaymentMode = editingInvoice?.mode || 'Credit';
+    if (!isEditing) {
+      const draftTotal = calculateInvoice(
+        {
+          items: validItems,
+          disc: Number(disc) || 0,
+          gstOn,
+          gstRate: Number(gstRate) || 0,
+          isInterState,
+          pay: []
+        },
+        Number(gstRate) || db.settings.rate
+      ).total;
+      const plan = resolveCreatePaymentPlan(paymentChoice, draftTotal, receivedAmt, mode);
+      if (!plan.ok) {
+        setError(plan.message);
+        return;
+      }
+      invoiceMode = plan.invoiceMode;
+      if (plan.createPayment) {
+        payments.length = 0;
+        payments.push(
+          buildInitialPaymentRecord({
+            invoiceId,
+            amount: plan.received,
+            mode,
+            date,
+            notes: `${plan.choice === 'full' ? 'Full' : 'Partial'} payment at invoice creation`
+          })
+        );
       }
     }
 
     const selectedClient = db.clients.find((c) => c.id === clientId);
     const invoice: Invoice = {
-      id: editingInvoice?.id || 'inv-' + Date.now().toString(36),
+      id: invoiceId,
       no: invoiceNo,
       cid: clientId,
       date,
@@ -156,7 +185,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
       customerPhone: selectedClient?.phone || editingInvoice?.customerPhone || '',
       state: state.trim(),
       hsnCode: hsnCode.trim(),
-      mode,
+      mode: invoiceMode,
       pay: payments,
       notes: notes.trim(),
       createdAt: editingInvoice?.createdAt || new Date().toISOString(),
@@ -172,12 +201,29 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
     onClose();
   };
 
-  const payOptions: { v: PaymentMode; label: string }[] = [
-    { v: 'Cash', label: 'Cash' },
-    { v: 'UPI', label: 'UPI' },
-    { v: 'Bank', label: 'Bank' },
-    { v: 'Credit', label: 'Pay Later' }
+  const selectPaymentChoice = (choice: CreatePaymentChoice) => {
+    setPaymentChoice(choice);
+    setError('');
+    if (choice === 'full') {
+      setReceivedAmt(calc.total > 0 ? calc.total.toFixed(2) : '0.00');
+    } else {
+      setReceivedAmt('');
+    }
+  };
+
+  useEffect(() => {
+    if (paymentChoice === 'full') {
+      setReceivedAmt(calc.total > 0 ? calc.total.toFixed(2) : '0.00');
+    }
+  }, [calc.total, paymentChoice]);
+
+  const previewPay = previewCreatePaymentAmounts(paymentChoice, calc.total, receivedAmt);
+  const choiceCards: { v: CreatePaymentChoice; label: string; hint: string }[] = [
+    { v: 'full', label: 'Full Payment', hint: 'Collect the entire total now' },
+    { v: 'partial', label: 'Partial Payment', hint: 'Collect part; rest stays due' },
+    { v: 'later', label: 'Pay Later', hint: '₹0 paid · Pending' }
   ];
+  const methodOptions: CreatePaymentMethod[] = ['Cash', 'UPI', 'Bank'];
 
   return (
     <div className="fixed inset-0 z-50 bg-[#081C2D]/50 flex items-center justify-center p-3 sm:p-6">
@@ -333,37 +379,91 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
           {!isEditing && (
             <section>
               <StepTitle n={3} title="How is the customer paying?" />
-              <div className="flex flex-wrap gap-2">
-                {payOptions.map((o) => (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {choiceCards.map((o) => (
                   <button
                     key={o.v}
                     type="button"
-                    onClick={() => setMode(o.v)}
-                    className={`h-10 px-5 text-sm font-bold rounded-lg border cursor-pointer transition-colors ${
-                      mode === o.v
-                        ? 'bg-[#1F7A63] border-[#1F7A63] text-white'
-                        : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                    onClick={() => selectPaymentChoice(o.v)}
+                    className={`text-left rounded-xl border-2 px-3.5 py-3 transition-colors cursor-pointer ${
+                      paymentChoice === o.v
+                        ? 'border-[#1F7A63] bg-[#1F7A63]/08 shadow-sm'
+                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    {o.label}
+                    <div
+                      className={`text-sm font-extrabold ${
+                        paymentChoice === o.v ? 'text-[#1F7A63]' : 'text-[#081C2D]'
+                      }`}
+                    >
+                      {o.label}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{o.hint}</div>
                   </button>
                 ))}
               </div>
-              {mode === 'Credit' ? (
-                <p className="text-sm text-slate-500 mt-2 mb-0">Nothing collected now — the full amount stays as balance due.</p>
-              ) : (
-                <div className="mt-3 max-w-xs">
+
+              {paymentChoice !== 'later' && (
+                <div className="mt-4">
+                  <div className={labelCls}>Payment method</div>
+                  <div className="flex flex-wrap gap-2">
+                    {methodOptions.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setMode(m)}
+                        className={`h-10 px-4 rounded-lg text-sm font-bold border cursor-pointer transition-colors ${
+                          mode === m
+                            ? 'bg-[#081C2D] border-[#081C2D] text-white'
+                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {paymentChoice === 'full' && (
+                <div className="mt-4 max-w-sm rounded-xl border border-[#1F7A63]/25 bg-[#F5F7FA] px-4 py-3">
+                  <div className="text-xs font-bold text-slate-600 mb-1">Amount received now</div>
+                  <div className="text-xl font-mono font-extrabold tabular-nums text-[#081C2D]">
+                    {money(calc.total)}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1.5 mb-0">
+                    Paid {money(previewPay.paidNow)} · Balance due {money(previewPay.balanceDue)}
+                  </p>
+                </div>
+              )}
+
+              {paymentChoice === 'partial' && (
+                <div className="mt-4 max-w-xs">
                   <label className={labelCls}>Amount received now</label>
                   <input
                     type="number"
-                    min="0"
+                    min="0.01"
+                    step="0.01"
                     value={receivedAmt}
-                    onChange={(e) => setReceivedAmt(e.target.value)}
-                    placeholder={`Full amount ₹${formatNumber(calc.total)}`}
+                    onChange={(e) => {
+                      setReceivedAmt(e.target.value);
+                      setError('');
+                    }}
+                    placeholder="0.00"
                     className={inputCls + ' font-mono'}
                   />
-                  <p className="text-xs text-slate-500 mt-1 mb-0">Leave empty if the full amount was paid.</p>
+                  <p className="text-xs text-slate-500 mt-1 mb-0">
+                    Must be greater than ₹0 and less than ₹{formatNumber(calc.total)}. Balance due:{' '}
+                    {money(previewPay.balanceDue)}
+                  </p>
                 </div>
+              )}
+
+              {paymentChoice === 'later' && (
+                <p className="text-sm text-slate-500 mt-3 mb-0">
+                  Nothing collected now — invoice is created with ₹0 paid and {money(calc.total)} outstanding
+                  (Pending).
+                </p>
               )}
             </section>
           )}

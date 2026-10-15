@@ -59,6 +59,11 @@ export interface PaymentRecord {
   mode: PaymentMode;
   refNo?: string;
   notes?: string;
+  /**
+   * Invoice this payment belongs to. New saves always set this.
+   * Legacy records may omit it — they remain linked by nesting under invoice.pay.
+   */
+  invoiceId?: string;
 }
 
 export interface Invoice {

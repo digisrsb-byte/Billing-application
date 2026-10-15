@@ -102,3 +102,15 @@ export function calculateInvoice(inv: Partial<Invoice>, defaultGstRate: number =
 export function generateInvoiceNo(prefix: string, seq: number): string {
   return `${prefix}${String(seq).padStart(4, '0')}`;
 }
+
+/** Display name for an invoice's customer (saved client, then buyer snapshot, then fallback). */
+export function invoiceCustomerName(
+  inv: Pick<Invoice, 'cid' | 'buyerSnapshot'>,
+  clients: Array<{ id: string; name: string }>
+): string {
+  const fromClient = clients.find((c) => c.id === inv.cid)?.name?.trim();
+  if (fromClient) return fromClient;
+  const fromSnap = inv.buyerSnapshot?.name?.trim();
+  if (fromSnap) return fromSnap;
+  return 'Customer';
+}

@@ -1,12 +1,14 @@
 /**
  * FIX-A / FIX-B / FIX-C verification — in-memory Storage only.
- * Run: npx tsx tmp-fix-abc-verify.mjs
+ * Run: npm run test:fix-abc   (or: npx tsx tmp-fix-abc-verify.mjs)
+ *
+ * App sources use Vite/bundler extensionless imports (e.g. '../types/billing').
+ * Native Node ESM cannot resolve those; register tsx before importing src/*.ts.
  */
+import { register } from 'tsx/esm/api';
 import crypto from 'crypto';
-import { join, dirname } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const unregisterTsx = register();
 
 const store = new Map();
 const session = new Map();
@@ -85,11 +87,13 @@ const sampleV2 = () => ({
 });
 
 async function main() {
-  const kv = await import(pathToFileURL(join(__dirname, 'src/services/kvStore.ts')).href);
+  // Relative .ts specifiers (not file://) so the registered tsx loader resolves
+  // extensionless app imports such as '../types/billing'.
+  const kv = await import('./src/services/kvStore.ts');
   await kv.initKvStore();
 
-  const auth = await import(pathToFileURL(join(__dirname, 'src/services/auth.ts')).href);
-  const storage = await import(pathToFileURL(join(__dirname, 'src/services/storage.ts')).href);
+  const auth = await import('./src/services/auth.ts');
+  const storage = await import('./src/services/storage.ts');
 
   const {
     STORAGE_KEY,
@@ -197,6 +201,18 @@ async function main() {
 
   console.log('\n=== FIX-C Safe recovery ===');
   store.clear();
+  // Re-seed AuthMeta after clear — startSession no longer auto-bootstraps a shared verifier
+  store.set(
+    auth.__authTest.AUTH_META_KEY,
+    JSON.stringify({
+      v: 2,
+      phone: BOOTSTRAP.phone,
+      algo: 'PBKDF2-SHA256',
+      iterations: BOOTSTRAP.iterations,
+      saltB64: BOOTSTRAP.saltB64,
+      hashB64: BOOTSTRAP.hashB64
+    })
+  );
   await auth.startSession(BOOTSTRAP.phone);
   useStorageKey(TEST_STORAGE_KEY);
   const current = {
@@ -269,10 +285,21 @@ async function main() {
 
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\nSUMMARY: ${results.length - failed}/${results.length} passed`);
+  unregisterTsx();
   process.exit(failed ? 1 : 0);
 }
 
 main().catch((e) => {
   console.error(e);
+  if (e && (e.code === 'ERR_MODULE_NOT_FOUND' || String(e).includes('Cannot find module'))) {
+    console.error(
+      'Hint: app TypeScript uses Vite extensionless imports. Run via `npm run test:fix-abc` or `npx tsx` so tsx can resolve them.'
+    );
+  }
+  try {
+    unregisterTsx();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 });

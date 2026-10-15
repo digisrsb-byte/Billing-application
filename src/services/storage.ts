@@ -1,4 +1,4 @@
-import { AppDatabase, CompanySettings, Client, Invoice, BoxConfig, AuditEvent, DbMeta } from '../types/billing';
+import { AppDatabase, CompanySettings, BoxConfig, AuditEvent, DbMeta } from '../types/billing';
 import { assertAuthenticatedSync } from './auth';
 import { findDuplicateInvoiceNos, syncNextSeq } from './invoiceIntegrity';
 import { kvGetItem, kvKeys, kvSetItem } from './kvStore';
@@ -75,37 +75,6 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   invoicePrefix: 'SRK-',
   nextSeq: 1
 };
-
-/**
- * Demo fixtures for isolated tests only — never used by emptyInitialDb / production init.
- * @deprecated Do not seed into live databases.
- */
-export const INITIAL_CLIENTS: Client[] = [
-  {
-    id: 'c1',
-    name: 'Apex Retail Traders',
-    phone: '+91 98450 12345',
-    addr: '#12, Commercial Street, Bangalore, Karnataka - 560001',
-    gst: '29ABCDE1234F1Z5',
-    state: 'Karnataka',
-    pin: '560001',
-    email: 'accounts@apexretail.in',
-    createdAt: '2026-10-01'
-  },
-  {
-    id: 'c2',
-    name: 'GreenLeaf Supermarket',
-    phone: '+91 98451 98765',
-    addr: 'Plot 45, Indiranagar 100ft Road, Bangalore, Karnataka - 560038',
-    gst: '29XYZPA5678Q1Z2',
-    state: 'Karnataka',
-    pin: '560038',
-    email: 'billing@greenleafmarket.com',
-    createdAt: '2026-10-05'
-  }
-];
-
-export const INITIAL_INVOICES: Invoice[] = [];
 
 let activeStorageKey = STORAGE_KEY;
 

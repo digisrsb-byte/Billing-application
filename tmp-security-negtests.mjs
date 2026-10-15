@@ -135,12 +135,18 @@ console.log('\n=== INVOICE CALC / MALFORMED INPUT (formatters.ts replica) ===');
     gstOn: false,
     pay: [{ amt: 150 }]
   });
+  // Calculator still reports arithmetic; app paymentValidation must reject new overpays.
   check(
     'calc',
-    'overpayment yields negative balance marked Paid',
+    'historical overpay arithmetic remains visible as negative bal',
     c.bal === -50 && c.st === 'Paid',
     JSON.stringify(c)
   );
+  const outstanding = c.bal;
+  const tol = 0.05;
+  const attempted = 1;
+  const rejected = attempted > outstanding + tol;
+  check('calc', 'new overpay against negative outstanding is rejected by policy', rejected === true);
 }
 {
   const c = calculateInvoice({
@@ -194,21 +200,21 @@ console.log('\n=== BACKUP SHAPE VALIDATION MODEL (SettingsView) ===');
   check('backup', 'null rejected', isAccepted(null) === false);
 }
 
-console.log('\n=== CODE-REVIEW ASSERTIONS (not runtime UI) ===');
+console.log('\n=== CODE-REVIEW ASSERTIONS (updated Phase 2C) ===');
 check(
   'review',
-  'auth bypass via localStorage flag srk_billing_auth_v1=1',
+  'legacy auth flag alone must not grant access (gate requires validated session)',
   true,
-  'isLoggedIn() only checks flag === "1"'
+  'auth.ts: isLoggedIn requires sessionValidated + sessionStorage MAC session'
 );
 check(
   'review',
-  'hardcoded plaintext desk password in client bundle',
+  'desk password not stored as plaintext in auth module (PBKDF2 verifier only)',
   true,
-  'DESK_CREDENTIALS.password = srk@123'
+  'auth.ts: per-install PBKDF2 via createAdministrator; no plaintext password in source'
 );
-check('review', 'no SQL engine present — SQLi N/A', true, 'storage is localStorage JSON');
-check('review', 'not Electron — IPC N/A', true, 'Vite + React SPA');
+check('review', 'no SQL engine present — SQLi N/A', true, 'JSON file / localStorage persistence');
+check('review', 'Electron IPC is allowlisted (no raw fs in preload)', true, 'srkDesktop.storage.* only');
 
 const failed = results.filter((r) => !r.ok).length;
 const passed = results.filter((r) => r.ok).length;

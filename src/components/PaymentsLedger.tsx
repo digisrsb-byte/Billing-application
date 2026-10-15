@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { AppDatabase, Invoice, PaymentMode, PaymentRecord } from '../types/billing';
-import { calculateInvoice, money, todayISO, formatDateDisplay } from '../utils/formatters';
-import { CreditCard, CheckCircle2, History, Plus, X } from 'lucide-react';
+import { calculateInvoice, money, todayISO, formatDateDisplay, invoiceCustomerName } from '../utils/formatters';
+import { validatePaymentRecord } from '../services/paymentValidation';
+import { X } from 'lucide-react';
 
 interface PaymentsLedgerProps {
   db: AppDatabase;
-  onRecordPaymentToInvoice: (invoiceId: string, payment: PaymentRecord) => void;
+  onRecordPaymentToInvoice: (invoiceId: string, payment: PaymentRecord) => void | boolean | Promise<void | boolean>;
   onViewInvoice: (invoice: Invoice) => void;
   showToast: (msg: string) => void;
 }
@@ -29,22 +30,25 @@ export const PaymentsLedger: React.FC<PaymentsLedgerProps> = ({
   // Pending invoices
   const pendingInvoices = useMemo(() => {
     return db.invoices
-      .filter((i) => calculateInvoice(i, db.settings.rate).bal > 0.05)
+      .filter((i) => !i.voided && calculateInvoice(i, db.settings.rate).bal > 0.05)
       .slice()
       .reverse();
   }, [db.invoices, db.settings.rate]);
 
   // All payment transactions
   const allPayments = useMemo(() => {
-    return db.invoices.flatMap((inv) => {
-      const client = db.clients.find((c) => c.id === inv.cid);
-      return (inv.pay || []).map((p) => ({
-        ...p,
-        invoiceId: inv.id,
-        invoiceNo: inv.no,
-        clientName: client?.name || 'Customer'
-      }));
-    }).sort((a, b) => (b.date > a.date ? 1 : -1));
+    return db.invoices
+      .flatMap((inv) => {
+        const clientName = invoiceCustomerName(inv, db.clients);
+        return (inv.pay || []).map((p) => ({
+          ...p,
+          invoiceId: p.invoiceId || inv.id,
+          invoiceNo: inv.no,
+          clientName,
+          invoice: inv
+        }));
+      })
+      .sort((a, b) => (b.date > a.date ? 1 : -1));
   }, [db.invoices, db.clients]);
 
   // Payment totals by mode
@@ -71,23 +75,28 @@ export const PaymentsLedger: React.FC<PaymentsLedgerProps> = ({
     e.preventDefault();
     if (!activePayingInvoice) return;
 
-    if (!payAmount || payAmount <= 0) {
-      showToast('Please enter a valid payment amount');
+    const check = validatePaymentRecord(activePayingInvoice, { amt: payAmount }, db.settings.rate);
+    if (!check.ok) {
+      showToast(check.message);
       return;
     }
 
+    const invId = activePayingInvoice.id;
     const newPayment: PaymentRecord = {
       id: 'p-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       date: payDate,
-      amt: Number(payAmount),
+      amt: check.amt,
       mode: payMode,
       refNo: payRef.trim(),
-      notes: payNotes.trim()
+      notes: payNotes.trim(),
+      invoiceId: invId
     };
 
-    onRecordPaymentToInvoice(activePayingInvoice.id, newPayment);
-    showToast(`Payment of ${money(payAmount)} recorded for ${activePayingInvoice.no}`);
-    setActivePayingInvoice(null);
+    void Promise.resolve(onRecordPaymentToInvoice(invId, newPayment)).then((ok) => {
+      if (ok === false) return;
+      showToast(`Payment of ${money(check.amt)} recorded for ${activePayingInvoice.no}`);
+      setActivePayingInvoice(null);
+    });
   };
 
   return (
@@ -181,7 +190,6 @@ export const PaymentsLedger: React.FC<PaymentsLedgerProps> = ({
                   </tr>
                 ) : (
                   pendingInvoices.map((inv) => {
-                    const client = db.clients.find((c) => c.id === inv.cid);
                     const calc = calculateInvoice(inv, db.settings.rate);
 
                     return (
@@ -196,7 +204,7 @@ export const PaymentsLedger: React.FC<PaymentsLedgerProps> = ({
                           {formatDateDisplay(inv.date)}
                         </td>
                         <td className="py-3 px-4 font-semibold text-slate-900">
-                          {client?.name || '—'}
+                          {invoiceCustomerName(inv, db.clients)}
                         </td>
                         <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-700">
                           {money(calc.total)}
@@ -267,7 +275,13 @@ export const PaymentsLedger: React.FC<PaymentsLedgerProps> = ({
                         {formatDateDisplay(p.date)}
                       </td>
                       <td className="py-3 px-4 font-mono font-bold text-teal-800">
-                        {p.invoiceNo}
+                        <button
+                          type="button"
+                          onClick={() => onViewInvoice(p.invoice)}
+                          className="bg-transparent border-0 p-0 font-mono font-bold text-teal-800 cursor-pointer hover:underline"
+                        >
+                          {p.invoiceNo}
+                        </button>
                       </td>
                       <td className="py-3 px-4 font-semibold text-slate-900">
                         {p.clientName}

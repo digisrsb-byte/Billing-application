@@ -1,13 +1,19 @@
 /**
  * Phase 2B persistence tests — file dataStore + clean init / import rules.
- * Run: npx tsx tmp-phase2b-persistence-tests.mjs
+ * Run: npm run test:phase2b   (or: npx tsx tmp-phase2b-persistence-tests.mjs)
+ *
+ * App sources use Vite/bundler extensionless imports (e.g. '../types/billing').
+ * Native Node ESM cannot resolve those; register tsx before importing src/*.ts.
  */
+import { register } from 'tsx/esm/api';
 import crypto from 'crypto';
 import { mkdtemp, readFile, rm, access } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+
+const unregisterTsx = register();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -139,12 +145,14 @@ async function testStorageService() {
   globalThis.atob = (s) => Buffer.from(s, 'base64').toString('binary');
   Object.defineProperty(globalThis, 'crypto', { value: crypto.webcrypto });
 
-  const kv = await import(pathToFileURL(join(__dirname, 'src/services/kvStore.ts')).href);
+  // Relative .ts specifiers (not file://) so the registered tsx loader resolves
+  // extensionless app imports such as '../types/billing'.
+  const kv = await import('./src/services/kvStore.ts');
   kv.resetKvStoreForTests();
   await kv.initKvStore();
 
-  const auth = await import(pathToFileURL(join(__dirname, 'src/services/auth.ts')).href);
-  const storage = await import(pathToFileURL(join(__dirname, 'src/services/storage.ts')).href);
+  const auth = await import('./src/services/auth.ts');
+  const storage = await import('./src/services/storage.ts');
 
   mem.set(
     auth.__authTest.AUTH_META_KEY,
@@ -198,10 +206,21 @@ async function main() {
   await testStorageService();
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\nSUMMARY: ${results.length - failed}/${results.length} passed`);
+  unregisterTsx();
   process.exit(failed ? 1 : 0);
 }
 
 main().catch((err) => {
   console.error(err);
+  if (err && (err.code === 'ERR_MODULE_NOT_FOUND' || String(err).includes('Cannot find module'))) {
+    console.error(
+      'Hint: app TypeScript uses Vite extensionless imports. Run via `npm run test:phase2b` or `npx tsx` so tsx can resolve them.'
+    );
+  }
+  try {
+    unregisterTsx();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 });

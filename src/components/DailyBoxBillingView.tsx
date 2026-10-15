@@ -1,14 +1,22 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { AppDatabase, Invoice, PaymentMode, InvoiceItem, Client } from '../types/billing';
+import { AppDatabase, Invoice, InvoiceItem, Client } from '../types/billing';
 import { calculateInvoice, money, todayISO, formatDateDisplay } from '../utils/formatters';
 import { allocateInvoiceNo } from '../services/invoiceIntegrity';
+import {
+  buildInitialPaymentRecord,
+  CreatePaymentChoice,
+  CreatePaymentMethod,
+  previewCreatePaymentAmounts,
+  resolveCreatePaymentPlan
+} from '../services/invoiceCreatePayment';
+import { findCustomerPhoneConflict } from '../utils/customerPhone';
 import { buildBuyerSnapshot, buildBuyerSnapshotFromClient, buildSellerSnapshot, extractPin } from '../utils/invoiceSnapshot';
 import { Plus, Minus, Receipt } from 'lucide-react';
 
 interface DailyBoxBillingViewProps {
   db: AppDatabase;
   onSaveInvoice: (invoice: Invoice, openPrint?: boolean) => void;
-  onSaveClient?: (client: Client) => void;
+  onSaveClient?: (client: Client) => boolean | void | Promise<boolean | void>;
   onOpenNewClientModal: () => void;
   onOpenFullInvoice?: () => void;
   showToast: (msg: string) => void;
@@ -35,7 +43,10 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
   const [invoiceDate, setInvoiceDate] = useState(today);
   const [poNo, setPoNo] = useState('');
   const [poDate, setPoDate] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMode>('Cash');
+  const [paymentChoice, setPaymentChoice] = useState<CreatePaymentChoice>('later');
+  const [paymentMethod, setPaymentMethod] = useState<CreatePaymentMethod>('Cash');
+  /** Used only for Partial Payment — cleared when switching away from partial. */
+  const [amountReceived, setAmountReceived] = useState<string>('');
   const [qtyMap, setQtyMap] = useState<Record<string, number>>({});
   const [saveOnetimeCustomer, setSaveOnetimeCustomer] = useState(false);
 
@@ -103,7 +114,7 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
     [activeItems, db.settings.gstOn, db.settings.rate]
   );
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!custName.trim()) return showToast('Enter customer name');
     if (!custPhone.trim()) return showToast('Enter customer phone number');
     if (customerMode === 'existing' && !selectedClientId) return showToast('Select a customer');
@@ -125,13 +136,24 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
           pin,
           createdAt: todayISO()
         };
-        onSaveClient(newClient);
+        const conflict = findCustomerPhoneConflict(db.clients, phone, newClient.id);
+        if (conflict) {
+          showToast(`Phone number already used by "${conflict.name}"`);
+          return;
+        }
+        const ok = await Promise.resolve(onSaveClient(newClient));
+        if (ok === false) return;
         clientId = newClient.id;
       } else {
         clientId = '';
       }
     } else if (selectedClient && onSaveClient) {
       // Keep customer profile in sync (not PO — PO stays on invoice only)
+      const conflict = findCustomerPhoneConflict(db.clients, phone, selectedClient.id);
+      if (conflict) {
+        showToast(`Phone number already used by "${conflict.name}"`);
+        return;
+      }
       const next: Client = {
         ...selectedClient,
         name: custName.trim(),
@@ -141,7 +163,8 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
         state: custState.trim() || selectedClient.state || 'Karnataka',
         pin
       };
-      onSaveClient(next);
+      const ok = await Promise.resolve(onSaveClient(next));
+      if (ok === false) return;
       clientId = selectedClient.id;
     }
 
@@ -189,7 +212,7 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
       customerPhone: phone,
       state: buyerSnapshot.state || db.settings.state || 'Karnataka (29)',
       hsnCode: db.settings.defaultHsn || '481910',
-      mode: paymentMethod,
+      mode: 'Credit',
       pay: [],
       notes: '',
       createdAt: new Date().toISOString(),
@@ -198,31 +221,65 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
       sellerSnapshot: buildSellerSnapshot(db.settings)
     };
 
-    if (paymentMethod !== 'Credit' && calc.total > 0) {
-      inv.pay.push({
-        id: 'p-' + Math.random().toString(36).slice(2, 7),
-        date: invoiceDate || today,
-        amt: calc.total,
-        mode: paymentMethod,
-        notes: `${paymentMethod} payment`
-      });
+    const plan = resolveCreatePaymentPlan(paymentChoice, calc.total, amountReceived, paymentMethod);
+    if (!plan.ok) {
+      showToast(plan.message);
+      return;
+    }
+    inv.mode = plan.invoiceMode;
+    if (plan.createPayment) {
+      // Exactly one payment for Full or Partial — never duplicate.
+      inv.pay = [
+        buildInitialPaymentRecord({
+          invoiceId: inv.id,
+          amount: plan.received,
+          mode: paymentMethod,
+          date: invoiceDate || today,
+          notes: `${plan.choice === 'full' ? 'Full' : 'Partial'} payment at invoice creation`
+        })
+      ];
     }
 
     setQtyMap({});
     setPoNo('');
     setPoDate('');
+    setAmountReceived('');
+    setPaymentChoice('later');
+    setPaymentMethod('Cash');
     setInvoiceDate(todayISO());
     if (customerMode === 'onetime') clearOnetimeFields();
     onSaveInvoice(inv, true);
     showToast(`Invoice ${no} created`);
   };
 
-  const paymentOptions: { v: PaymentMode; label: string }[] = [
-    { v: 'Cash', label: 'Cash' },
-    { v: 'UPI', label: 'UPI' },
-    { v: 'Bank', label: 'Bank' },
-    { v: 'Credit', label: 'Pay later' }
+  const selectPaymentChoice = (choice: CreatePaymentChoice) => {
+    setPaymentChoice(choice);
+    if (choice === 'full') {
+      setAmountReceived(calc.total > 0 ? calc.total.toFixed(2) : '0.00');
+    } else if (choice === 'partial') {
+      setAmountReceived('');
+    } else {
+      setAmountReceived('');
+    }
+  };
+
+  // Keep Full Payment amount in sync when line totals change
+  useEffect(() => {
+    if (paymentChoice === 'full') {
+      setAmountReceived(calc.total > 0 ? calc.total.toFixed(2) : '0.00');
+    }
+  }, [calc.total, paymentChoice]);
+
+  const preview = previewCreatePaymentAmounts(paymentChoice, calc.total, amountReceived);
+  const previewPaid = preview.paidNow;
+  const previewBal = preview.balanceDue;
+
+  const paymentChoiceCards: { v: CreatePaymentChoice; label: string; hint: string }[] = [
+    { v: 'full', label: 'Full Payment', hint: 'Collect the entire invoice total now' },
+    { v: 'partial', label: 'Partial Payment', hint: 'Collect part now; balance stays due' },
+    { v: 'later', label: 'Pay Later', hint: 'Create invoice with ₹0 paid' }
   ];
+  const methodOptions: CreatePaymentMethod[] = ['Cash', 'UPI', 'Bank'];
 
   const fieldCls =
     'w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-teal-600 focus:bg-white';
@@ -483,38 +540,107 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
             </div>
             <span className="text-3xl font-black font-mono tabular-nums text-[#1F7A63]">{money(calc.total)}</span>
           </div>
-          {paymentMethod !== 'Credit' ? (
-            <div className="flex justify-between text-sm text-emerald-700 font-semibold pt-1">
-              <span>Amount paid (on create)</span>
-              <span className="font-mono">{money(calc.total)}</span>
-            </div>
-          ) : (
-            <div className="flex justify-between text-sm text-amber-700 font-semibold pt-1">
-              <span>Outstanding balance</span>
-              <span className="font-mono">{money(calc.total)}</span>
-            </div>
-          )}
+          <div className="flex justify-between text-sm text-emerald-700 font-semibold pt-1">
+            <span>Paid now</span>
+            <span className="font-mono">{money(previewPaid)}</span>
+          </div>
+          <div className="flex justify-between text-sm text-amber-700 font-semibold">
+            <span>Balance due</span>
+            <span className="font-mono">{money(previewBal)}</span>
+          </div>
         </div>
 
         <div className="p-5 border-t border-slate-200 space-y-4">
           <div>
             <div className="text-sm font-semibold text-[#081C2D] mb-2">3. Payment</div>
-            <div className="flex flex-wrap items-center gap-2">
-              {paymentOptions.map((o) => (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {paymentChoiceCards.map((o) => (
                 <button
                   key={o.v}
                   type="button"
-                  onClick={() => setPaymentMethod(o.v)}
-                  className={`h-10 px-4 rounded-lg text-sm font-bold border transition-colors cursor-pointer ${
-                    paymentMethod === o.v
-                      ? 'bg-[#1F7A63] border-[#1F7A63] text-white'
-                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                  onClick={() => selectPaymentChoice(o.v)}
+                  className={`text-left rounded-xl border-2 px-3.5 py-3 transition-colors cursor-pointer ${
+                    paymentChoice === o.v
+                      ? 'border-[#1F7A63] bg-[#1F7A63]/08 shadow-sm'
+                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                   }`}
                 >
-                  {o.label}
+                  <div
+                    className={`text-sm font-extrabold ${
+                      paymentChoice === o.v ? 'text-[#1F7A63]' : 'text-[#081C2D]'
+                    }`}
+                  >
+                    {o.label}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{o.hint}</div>
                 </button>
               ))}
             </div>
+
+            {paymentChoice !== 'later' && (
+              <div className="mt-4">
+                <div className="text-xs font-bold text-slate-700 mb-2">Payment method</div>
+                <div className="flex flex-wrap gap-2">
+                  {methodOptions.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPaymentMethod(m)}
+                      className={`h-10 px-4 rounded-lg text-sm font-bold border transition-colors cursor-pointer ${
+                        paymentMethod === m
+                          ? 'bg-[#081C2D] border-[#081C2D] text-white'
+                          : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {paymentChoice === 'full' && (
+              <div className="mt-4 max-w-sm rounded-xl border border-[#1F7A63]/25 bg-[#F5F7FA] px-4 py-3">
+                <div className="text-xs font-bold text-slate-600 mb-1">Amount received now</div>
+                <div className="text-xl font-mono font-extrabold tabular-nums text-[#081C2D]">
+                  {money(calc.total)}
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5 mb-0">
+                  Full settlement — balance due will be ₹0.00.
+                </p>
+              </div>
+            )}
+
+            {paymentChoice === 'partial' && (
+              <div className="mt-4 max-w-sm">
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Amount received now
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
+                    ₹
+                  </span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={amountReceived}
+                    onChange={(e) => setAmountReceived(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full h-11 pl-8 pr-3 bg-white border border-slate-300 rounded-xl text-sm font-mono font-bold text-slate-900 focus:outline-teal-600"
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5 mb-0">
+                  Enter an amount greater than ₹0 and less than {money(calc.total)}.
+                </p>
+              </div>
+            )}
+
+            {paymentChoice === 'later' && (
+              <p className="text-xs text-slate-500 mt-3 mb-0">
+                No payment will be recorded. Invoice status will be Pending with the full total outstanding.
+              </p>
+            )}
           </div>
 
           <button

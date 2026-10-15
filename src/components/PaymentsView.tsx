@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
-import { AppDatabase, Invoice, PaymentRecord } from '../types/billing';
-import { calculateInvoice, money, formatDateDisplay } from '../utils/formatters';
-import { Plus, CreditCard, Wallet, FileText, Printer } from 'lucide-react';
+import { AppDatabase, Invoice } from '../types/billing';
+import { calculateInvoice, money, formatDateDisplay, invoiceCustomerName } from '../utils/formatters';
+import { Plus, CreditCard, Wallet, FileText } from 'lucide-react';
 
 interface PaymentsViewProps {
   db: AppDatabase;
@@ -14,17 +14,21 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   onOpenRecordPayment,
   onViewInvoice
 }) => {
-  // Aggregate stats
+  // Activity rows are derived from invoice.pay[] — each payment is linked by parent invoice
+  // (and invoiceId when present). Never invent a separate unlinked payments list.
   const allPayments = useMemo(() => {
-    return db.invoices.flatMap((inv) => {
-      const client = db.clients.find((c) => c.id === inv.cid);
-      return (inv.pay || []).map((p) => ({
-        ...p,
-        invoiceId: inv.id,
-        invoiceNo: inv.no,
-        clientName: client?.name || 'Customer'
-      }));
-    }).sort((a, b) => (b.date > a.date ? 1 : -1));
+    return db.invoices
+      .flatMap((inv) => {
+        const clientName = invoiceCustomerName(inv, db.clients);
+        return (inv.pay || []).map((p) => ({
+          ...p,
+          invoiceId: p.invoiceId || inv.id,
+          invoiceNo: inv.no,
+          clientName,
+          invoice: inv
+        }));
+      })
+      .sort((a, b) => (b.date > a.date ? 1 : -1));
   }, [db.invoices, db.clients]);
 
   const totalCollected = useMemo(() => {
@@ -32,7 +36,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   }, [allPayments]);
 
   const pendingInvoices = useMemo(() => {
-    return db.invoices.filter((i) => calculateInvoice(i, db.settings.rate).bal > 0.05);
+    return db.invoices.filter((i) => !i.voided && calculateInvoice(i, db.settings.rate).bal > 0.05);
   }, [db.invoices, db.settings.rate]);
 
   const totalOpenBalance = useMemo(() => {
@@ -153,7 +157,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                       {formatDateDisplay(p.date)}
                     </td>
                     <td className="py-3.5 px-6 font-bold font-mono text-[#1F7A63]">
-                      {p.invoiceNo}
+                      <button
+                        type="button"
+                        onClick={() => onViewInvoice(p.invoice)}
+                        className="bg-transparent border-0 p-0 font-bold font-mono text-[#1F7A63] cursor-pointer hover:underline"
+                      >
+                        {p.invoiceNo}
+                      </button>
                     </td>
                     <td className="py-3.5 px-6 font-semibold text-slate-900">
                       {p.clientName}
