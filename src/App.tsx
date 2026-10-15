@@ -3,7 +3,6 @@ import { AppDatabase, Invoice, Client, PaymentRecord, CompanySettings } from './
 import {
   getDatabase,
   saveDatabase,
-  resetDatabase,
   recordAudit,
   DatabaseLoadError,
   restoreFromDatabase
@@ -355,16 +354,6 @@ export default function App() {
     [commitDb, showToast]
   );
 
-  const handleResetData = useCallback(async () => {
-    try {
-      const fresh = await resetDatabase();
-      commitDb(fresh);
-      setCurrentView('overview');
-    } catch {
-      showToast('Could not reset database');
-    }
-  }, [commitDb, showToast]);
-
   /** Confirmed restore from Settings (file or recovery key). Snapshots current DB first. */
   const handleImportData = useCallback(
     async (imported: AppDatabase, sourceLabel: string = 'file') => {
@@ -379,9 +368,11 @@ export default function App() {
         setCurrentView('overview');
       } catch (err) {
         if (err instanceof Error && err.message === 'DUPLICATE_INVOICE_NO') {
-          showToast('Import blocked — backup contains unresolved duplicate invoice numbers');
+          showToast('Import blocked — backup contains unresolved duplicate invoice numbers. Current data kept.');
         } else if (err instanceof Error && err.message === 'RESTORE_NOT_CONFIRMED') {
           showToast('Restore cancelled — confirmation required');
+        } else if (err instanceof Error && err.message === 'RESTORE_SOURCE_INVALID') {
+          showToast('Import blocked — backup failed validation. Current data kept.');
         } else {
           showToast('Import failed — current data was not replaced');
         }
@@ -619,7 +610,6 @@ export default function App() {
             <SettingsView
               db={db}
               onUpdateSettings={handleUpdateSettings}
-              onResetData={handleResetData}
               onImportData={handleImportData}
               onDatabaseReplaced={(restored) => {
                 commitDb(restored);

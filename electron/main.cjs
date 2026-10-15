@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const CHANNELS = require('./ipc-channels.cjs');
@@ -116,7 +117,20 @@ function registerIpcHandlers() {
   });
 }
 
+function resolveAppIconPath() {
+  const packagedIcon = path.join(__dirname, 'assets', 'icon.ico');
+  if (fs.existsSync(packagedIcon)) {
+    return packagedIcon;
+  }
+  const buildIcon = path.join(__dirname, '..', 'build', 'icon.ico');
+  if (fs.existsSync(buildIcon)) {
+    return buildIcon;
+  }
+  return undefined;
+}
+
 function createMainWindow() {
+  const iconPath = resolveAppIconPath();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -125,6 +139,7 @@ function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     title: 'SRK Enterprises Billing',
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

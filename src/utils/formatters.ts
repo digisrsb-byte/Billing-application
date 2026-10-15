@@ -45,7 +45,40 @@ export function formatShortDate(dateStr: string): string {
   return `${d}/${m}/${y}`;
 }
 
-export function calculateInvoice(inv: Partial<Invoice>, defaultGstRate: number = 1): InvoiceCalculation {
+export type GstSplitOptions = {
+  /** Share of GST for CGST (0–1, or percent > 1). Default 0.5. */
+  cgstSplit?: number;
+  /** Share of GST for SGST (0–1, or percent > 1). Default 0.5. */
+  sgstSplit?: number;
+};
+
+/** Normalize CGST/SGST shares so they sum to 1. Accepts 0.5/0.5 or 50/50. */
+export function normalizeGstSplits(
+  cgstSplit?: number,
+  sgstSplit?: number
+): { cgst: number; sgst: number } {
+  let c = Number(cgstSplit);
+  let s = Number(sgstSplit);
+  if (!Number.isFinite(c) || c < 0) c = 0.5;
+  if (!Number.isFinite(s) || s < 0) s = 0.5;
+  if (c === 0 && s === 0) {
+    c = 0.5;
+    s = 0.5;
+  }
+  // Values > 1 are treated as percentages (e.g. 50 + 50)
+  if (c > 1 || s > 1) {
+    const sum = c + s;
+    return { cgst: c / sum, sgst: s / sum };
+  }
+  const sum = c + s;
+  return { cgst: c / sum, sgst: s / sum };
+}
+
+export function calculateInvoice(
+  inv: Partial<Invoice>,
+  defaultGstRate: number = 1,
+  splits?: GstSplitOptions
+): InvoiceCalculation {
   const items = inv.items || [];
   const sub = items.reduce((acc, it) => acc + (Number(it.q) || 0) * (Number(it.r) || 0), 0);
   const rawDisc = Number(inv.disc) || 0;
@@ -55,6 +88,10 @@ export function calculateInvoice(inv: Partial<Invoice>, defaultGstRate: number =
   const gstOn = !!inv.gstOn;
   const gstRate = inv.gstRate !== undefined ? Number(inv.gstRate) : defaultGstRate;
   const isInterState = !!inv.isInterState;
+  const { cgst: cgstShare, sgst: sgstShare } = normalizeGstSplits(
+    splits?.cgstSplit,
+    splits?.sgstSplit
+  );
 
   let gst = 0;
   let cgst = 0;
@@ -66,7 +103,9 @@ export function calculateInvoice(inv: Partial<Invoice>, defaultGstRate: number =
     if (isInterState) {
       igst = gst;
     } else {
-      cgst = Math.round((gst / 2) * 100) / 100;
+      // Prefer CGST share; assign rounding residual to SGST so CGST+SGST === GST.
+      void sgstShare;
+      cgst = Math.round(gst * cgstShare * 100) / 100;
       sgst = Math.round((gst - cgst) * 100) / 100;
     }
   }

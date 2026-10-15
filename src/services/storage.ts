@@ -37,19 +37,26 @@ export class DatabaseLoadError extends Error {
   }
 }
 
+/**
+ * Default product catalogue for a brand-new database only.
+ * Existing saved product lists are never replaced on launch.
+ */
 export const DEFAULT_BOXES: BoxConfig[] = [
-  { id: 'b1', n: '1 Litre Box', p: 120, hsn: '481910', pack: '1 Litre' },
-  { id: 'b2', n: '2 Litre Box', p: 220, hsn: '481910', pack: '2 Litre' },
-  { id: 'b3', n: '½ Litre Box', p: 65, hsn: '481910', pack: '½ Litre' },
-  { id: 'b4', n: '250 ml Box', p: 35, hsn: '481910', pack: '250 ml' },
-  { id: 'b5', n: '5 Litre Can', p: 65, hsn: '481910', pack: '5 Litre' },
-  { id: 'b6', n: '10 Litre Can', p: 110, hsn: '481910', pack: '10 Litre' },
-  { id: 'b7', n: '20 Litre Can', p: 100, hsn: '481910', pack: '20 Litre' }
+  { id: 'b1', n: '1 Litre Water Bottle', p: 140, hsn: '481910', pack: '12 / box', unitsPerBox: 12 },
+  { id: 'b2', n: '500 ml Water Bottle', p: 170, hsn: '481910', pack: '24 / box', unitsPerBox: 24 },
+  { id: 'b3', n: '2 Litre Water Bottle', p: 210, hsn: '481910', pack: '9 / box', unitsPerBox: 9 },
+  { id: 'b4', n: '250 ml Water Bottle', p: 140, hsn: '481910', pack: '24 / box', unitsPerBox: 24 },
+  { id: 'b5', n: '300 ml Water Bottle', p: 160, hsn: '481910', pack: '24 / box', unitsPerBox: 24 },
+  { id: 'b6', n: '20 Litre Water Can', p: 100, hsn: '481910', pack: '1 can', unitsPerBox: 1 },
+  { id: 'b7', n: '5 Litre Water Can', p: 65, hsn: '481910', pack: '1 can', unitsPerBox: 1 },
+  { id: 'b8', n: '10 Litre Water Can', p: 110, hsn: '481910', pack: '1 can', unitsPerBox: 1 }
 ];
 
 /**
- * Neutral shipped defaults — no client-specific bank/tax/contact details.
- * Existing saved settings always win over these blanks during normalize.
+ * Shipped company defaults for new databases only.
+ * Existing saved settings always win during normalize (never overwrite live data).
+ * Address, phone, email, GSTIN, PAN, state, and UPI stay blank until the client sets them.
+ * DBS Bank invoice payment details are pre-filled for SRK Enterprises Billing.
  */
 export const DEFAULT_SETTINGS: CompanySettings = {
   name: 'SRK Enterprises',
@@ -59,15 +66,16 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   gst: '',
   pan: '',
   state: '',
+  currency: 'INR',
   gstOn: true,
   rate: 1,
   cgstSplit: 0.5,
   sgstSplit: 0.5,
   defaultHsn: '481910',
-  bankName: '',
-  accountNo: '',
-  ifsc: '',
-  branch: '',
+  bankName: 'DBS Bank',
+  accountNo: '0164360000008932',
+  ifsc: 'DBSS0IN0164',
+  branch: 'City Market Branch',
   upiId: '',
   logoUrl: '',
   signatureUrl: '',
@@ -117,23 +125,16 @@ function appendAudit(meta: DbMeta, event: Omit<AuditEvent, 'id' | 'at'> & { id?:
   return { ...meta, auditLog: log };
 }
 
-function mergeDefaultBoxes(existing: BoxConfig[] | undefined): BoxConfig[] {
-  const list = Array.isArray(existing) ? [...existing] : [];
-  const byId = new Map(list.map((b) => [b.id, b]));
-  const byName = new Map(list.map((b) => [b.n.trim().toLowerCase(), b]));
-
-  for (const def of DEFAULT_BOXES) {
-    if (byId.has(def.id) || byName.has(def.n.trim().toLowerCase())) continue;
-    list.push({ ...def });
-    byId.set(def.id, def);
-    byName.set(def.n.trim().toLowerCase(), def);
+/**
+ * Product catalogue resolution:
+ * - Missing / empty boxes → ship DEFAULT_BOXES (first-run / incomplete settings only).
+ * - Non-empty saved list → keep as-is (never overwrite prices, names, or pack qty).
+ */
+export function resolveBoxes(existing: BoxConfig[] | undefined): BoxConfig[] {
+  if (Array.isArray(existing) && existing.length > 0) {
+    return existing.map((b) => ({ ...b }));
   }
-
-  return list.map((b) => {
-    const def = DEFAULT_BOXES.find((d) => d.id === b.id || d.n.trim().toLowerCase() === b.n.trim().toLowerCase());
-    if (def && !b.pack) return { ...b, pack: def.pack };
-    return b;
-  });
+  return DEFAULT_BOXES.map((b) => ({ ...b }));
 }
 
 async function writeSalvageCopy(storageKey: string, raw: string): Promise<string> {
@@ -233,7 +234,7 @@ async function migrateToV3(db: AppDatabase, createdBackup: boolean, backupKey: s
     settings: {
       ...DEFAULT_SETTINGS,
       ...db.settings,
-      boxes: mergeDefaultBoxes(db.settings?.boxes),
+      boxes: resolveBoxes(db.settings?.boxes),
       nextSeq
     },
     meta
@@ -247,8 +248,13 @@ async function normalizeDb(parsed: AppDatabase, rawForBackup: string | null): Pr
     createdBackup = await createBackupIfNeeded(rawForBackup);
   }
 
+  const priorBoxes = parsed.settings?.boxes;
   parsed.settings = { ...DEFAULT_SETTINGS, ...parsed.settings };
-  parsed.settings.boxes = mergeDefaultBoxes(parsed.settings.boxes);
+  // currency may be absent on older saves — fill only when missing/blank
+  if (!parsed.settings.currency || String(parsed.settings.currency).trim() === '') {
+    parsed.settings.currency = DEFAULT_SETTINGS.currency;
+  }
+  parsed.settings.boxes = resolveBoxes(priorBoxes);
 
   // Clear known placeholder bank fields from older templates (do not inject real bank details).
   if (parsed.settings.accountNo === '384910294812' || parsed.settings.ifsc === 'SBIN0004123') {
@@ -390,6 +396,10 @@ export async function saveDatabase(db: AppDatabase): Promise<void> {
   });
 }
 
+/**
+ * Destructive wipe — NOT exposed in Settings UI.
+ * Kept for automated tests / emergency tooling only. Prefer Export + Import restore.
+ */
 export async function resetDatabase(): Promise<AppDatabase> {
   assertAuthenticatedSync();
   const fresh = emptyInitialDb();
@@ -525,13 +535,30 @@ export async function restoreFromStorageKey(sourceKey: string, confirmed: boolea
     action: 'restore_backup',
     detail: `Restored from storage key into ${dest}; prior snapshot ${preKey}`
   });
-  await saveDatabase(db);
+
+  try {
+    await saveDatabase(db);
+  } catch (err) {
+    if (preKey !== '(empty)') {
+      const snap = kvGetItem(preKey);
+      if (snap != null && snap !== '') {
+        try {
+          await kvSetItem(dest, snap);
+        } catch {
+          /* best-effort rollback */
+        }
+      }
+    }
+    throw err;
+  }
+
   return { db, sourceKey, destinationKey: dest, preRestoreSnapshotKey: preKey };
 }
 
 /**
  * Explicit file/JSON import. Never reads browser localStorage automatically.
- * Requires confirmed === true; snapshots current DB before replace.
+ * Requires confirmed === true; validates shape; snapshots current DB before replace.
+ * On write failure after a snapshot exists, rolls the live key back to that snapshot.
  */
 export async function restoreFromDatabase(
   imported: AppDatabase,
@@ -557,7 +584,23 @@ export async function restoreFromDatabase(
   });
   // sourceLabel used only for caller UI — not logged with file contents
   void sourceLabel;
-  await saveDatabase(db);
+
+  try {
+    await saveDatabase(db);
+  } catch (err) {
+    if (preKey !== '(empty)') {
+      const snap = kvGetItem(preKey);
+      if (snap != null && snap !== '') {
+        try {
+          await kvSetItem(dest, snap);
+        } catch {
+          /* best-effort rollback */
+        }
+      }
+    }
+    throw err;
+  }
+
   return {
     db,
     sourceKey: sourceLabel,

@@ -186,15 +186,25 @@ console.log('\n=== DUPLICATE INVOICE NUMBER MODEL ===');
   );
 }
 
-console.log('\n=== BACKUP SHAPE VALIDATION MODEL (SettingsView) ===');
+console.log('\n=== BACKUP SHAPE VALIDATION MODEL (SettingsView / storage) ===');
 {
   const isAccepted = (parsed) =>
-    !!(parsed && Array.isArray(parsed.clients) && Array.isArray(parsed.invoices));
-  check('backup', 'minimal valid shape accepted', isAccepted({ clients: [], invoices: [] }));
+    !!(
+      parsed &&
+      Array.isArray(parsed.clients) &&
+      Array.isArray(parsed.invoices) &&
+      parsed.settings &&
+      typeof parsed.settings === 'object'
+    );
   check(
     'backup',
-    'missing settings still accepted (weak schema)',
-    isAccepted({ clients: [], invoices: [], settings: undefined }) === true
+    'minimal valid shape with settings accepted',
+    isAccepted({ clients: [], invoices: [], settings: {} })
+  );
+  check(
+    'backup',
+    'missing settings rejected',
+    isAccepted({ clients: [], invoices: [], settings: undefined }) === false
   );
   check('backup', 'random object rejected', isAccepted({ foo: 1 }) === false);
   check('backup', 'null rejected', isAccepted(null) === false);

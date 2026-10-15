@@ -11,7 +11,7 @@ interface ProductsViewProps {
   showToast: (msg: string) => void;
 }
 
-type SortKey = 'n' | 'pack' | 'qty' | 'p';
+type SortKey = 'n' | 'pack' | 'units' | 'qty' | 'p';
 
 export const ProductsView: React.FC<ProductsViewProps> = ({ db, onUpdateSettings, showToast }) => {
   const [query, setQuery] = useState('');
@@ -22,10 +22,25 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ db, onUpdateSettings
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return db.settings.boxes
-      .filter((b) => !q || b.n.toLowerCase().includes(q) || (b.pack || '').toLowerCase().includes(q))
+      .filter(
+        (b) =>
+          !q ||
+          b.n.toLowerCase().includes(q) ||
+          (b.pack || '').toLowerCase().includes(q) ||
+          String(b.unitsPerBox || '').includes(q)
+      )
       .slice()
       .sort((a, b) => {
-        const get = (x: BoxConfig) => (sort.key === 'n' ? x.n : sort.key === 'pack' ? x.pack || '' : sort.key === 'qty' ? x.qty ?? 0 : x.p);
+        const get = (x: BoxConfig) =>
+          sort.key === 'n'
+            ? x.n
+            : sort.key === 'pack'
+              ? x.pack || ''
+              : sort.key === 'units'
+                ? x.unitsPerBox ?? 0
+                : sort.key === 'qty'
+                  ? x.qty ?? 0
+                  : x.p;
         return compare(get(a), get(b), sort.dir);
       });
   }, [db.settings.boxes, query, sort.key, sort.dir]);
@@ -77,8 +92,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ db, onUpdateSettings
               <thead>
                 <tr className="bg-[#F5F7FA] border-b border-[#D5DBDF]">
                   <SortTh label="Product name" active={sort.key === 'n'} dir={sort.dir} onClick={() => sort.toggle('n')} />
-                  <SortTh label="Pack size" active={sort.key === 'pack'} dir={sort.dir} onClick={() => sort.toggle('pack')} />
-                  <SortTh label="Quantity" align="right" active={sort.key === 'qty'} dir={sort.dir} onClick={() => sort.toggle('qty')} />
+                  <SortTh label="Pack" active={sort.key === 'pack'} dir={sort.dir} onClick={() => sort.toggle('pack')} />
+                  <SortTh label="Items/box" align="right" active={sort.key === 'units'} dir={sort.dir} onClick={() => sort.toggle('units')} />
+                  <SortTh label="Stock" align="right" active={sort.key === 'qty'} dir={sort.dir} onClick={() => sort.toggle('qty')} />
                   <SortTh label="Price" align="right" active={sort.key === 'p'} dir={sort.dir} onClick={() => sort.toggle('p')} />
                   <th className="py-3 px-5 w-16" />
                 </tr>
@@ -88,6 +104,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ db, onUpdateSettings
                   <tr key={b.id} className="hover:bg-[#F5F7FA]">
                     <td className="py-3.5 px-5 font-semibold text-[#081C2D]">{b.n}</td>
                     <td className="py-3.5 px-5 text-[#9AA3A8]">{b.pack || '—'}</td>
+                    <td className="py-3.5 px-5 text-right tabular-nums text-[#081C2D]">{b.unitsPerBox ?? '—'}</td>
                     <td className="py-3.5 px-5 text-right tabular-nums text-[#081C2D]">{b.qty ?? '—'}</td>
                     <td className="py-3.5 px-5 text-right tabular-nums font-semibold text-[#081C2D]">{money(b.p)}</td>
                     <td className="py-2 px-3 text-right">
@@ -135,6 +152,9 @@ const ProductForm: React.FC<{
 }> = ({ initial, defaultHsn, onClose, onSave }) => {
   const [n, setN] = useState(initial?.n || '');
   const [pack, setPack] = useState(initial?.pack || '');
+  const [unitsPerBox, setUnitsPerBox] = useState(
+    initial?.unitsPerBox !== undefined ? String(initial.unitsPerBox) : ''
+  );
   const [qty, setQty] = useState(initial?.qty !== undefined ? String(initial.qty) : '');
   const [price, setPrice] = useState(initial ? String(initial.p) : '');
   const [hsn, setHsn] = useState(initial?.hsn || defaultHsn || '');
@@ -143,17 +163,22 @@ const ProductForm: React.FC<{
   const errors = {
     n: !n.trim() ? 'Enter a product name' : '',
     price: price.trim() === '' || Number(price) < 0 || isNaN(Number(price)) ? 'Enter a valid price' : '',
-    qty: qty.trim() !== '' && (isNaN(Number(qty)) || Number(qty) < 0) ? 'Quantity must be 0 or more' : ''
+    units:
+      unitsPerBox.trim() !== '' && (isNaN(Number(unitsPerBox)) || Number(unitsPerBox) < 1)
+        ? 'Items per box must be 1 or more'
+        : '',
+    qty: qty.trim() !== '' && (isNaN(Number(qty)) || Number(qty) < 0) ? 'Stock must be 0 or more' : ''
   };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setTried(true);
-    if (errors.n || errors.price || errors.qty) return;
+    if (errors.n || errors.price || errors.units || errors.qty) return;
     onSave({
       id: initial?.id || 'b' + Date.now().toString(36),
       n: n.trim(),
       pack: pack.trim() || undefined,
+      unitsPerBox: unitsPerBox.trim() === '' ? undefined : Math.floor(Number(unitsPerBox)),
       qty: qty.trim() === '' ? undefined : Math.floor(Number(qty)),
       p: Number(price),
       hsn: hsn.trim() || undefined
@@ -174,13 +199,23 @@ const ProductForm: React.FC<{
             <input autoFocus value={n} onChange={(e) => setN(e.target.value)} placeholder="e.g. 20 Litre Can" className={inputCls} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Pack size">
-              <input value={pack} onChange={(e) => setPack(e.target.value)} placeholder="e.g. 20 Litre" className={inputCls} />
+            <Field label="Pack label">
+              <input value={pack} onChange={(e) => setPack(e.target.value)} placeholder="e.g. 12 / box" className={inputCls} />
             </Field>
-            <Field label="Quantity in stock" error={tried ? errors.qty : ''}>
-              <input type="number" min="0" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" className={inputCls} />
+            <Field label="Items per box" error={tried ? errors.units : ''}>
+              <input
+                type="number"
+                min="1"
+                value={unitsPerBox}
+                onChange={(e) => setUnitsPerBox(e.target.value)}
+                placeholder="12"
+                className={inputCls}
+              />
             </Field>
           </div>
+          <Field label="Quantity in stock" error={tried ? errors.qty : ''}>
+            <input type="number" min="0" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" className={inputCls} />
+          </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Price (₹) *" error={tried ? errors.price : ''}>
               <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" className={inputCls} />

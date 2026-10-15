@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { Invoice, Client, CompanySettings } from '../types/billing';
-import { calculateInvoice, formatDateDisplay, money, formatNumber } from '../utils/formatters';
+import { calculateInvoice, formatDateDisplay, money, formatNumber, normalizeGstSplits } from '../utils/formatters';
 import { numberToIndianWords } from '../utils/numberToWords';
 import { BrandLogo } from './BrandLogo';
 import signatureImg from '../assets/images/srk_signature_transparent.png';
@@ -47,7 +47,8 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
   const buyerState = buyer?.state || invoice.state || client?.state || 'Karnataka';
   const buyerPin = buyer?.pin || client?.pin || '';
 
-  const calc = calculateInvoice(invoice, invoice.gstRate ?? settings.rate);
+  const taxSplits = { cgstSplit: settings.cgstSplit, sgstSplit: settings.sgstSplit };
+  const calc = calculateInvoice(invoice, invoice.gstRate ?? settings.rate, taxSplits);
   const [copied, setCopied] = React.useState(false);
   const printContainerRef = useRef<HTMLDivElement>(null);
   const isFinalized = !!invoice.finalized;
@@ -68,8 +69,9 @@ export const TaxInvoiceReport: React.FC<TaxInvoiceReportProps> = ({
   const minRows = Math.max(6, items.length);
   const emptyRowsCount = Math.max(0, minRows - items.length);
 
-  const cgstLabel = `CGST ${invoice.gstOn ? (calc.gstRate / 2).toFixed(1) : '0.5'}%`;
-  const sgstLabel = `SGST ${invoice.gstOn ? (calc.gstRate / 2).toFixed(1) : '0.5'}%`;
+  const splitShares = normalizeGstSplits(settings.cgstSplit, settings.sgstSplit);
+  const cgstLabel = `CGST ${invoice.gstOn ? (calc.gstRate * splitShares.cgst).toFixed(1) : '0.5'}%`;
+  const sgstLabel = `SGST ${invoice.gstOn ? (calc.gstRate * splitShares.sgst).toFixed(1) : '0.5'}%`;
 
   return (
     <div className={isModal ? 'fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 print:p-0 print:bg-white print:static' : 'w-full'}>

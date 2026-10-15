@@ -276,7 +276,16 @@ async function main() {
   store.delete(storage.TEST_STORAGE_KEY);
   const fresh = await storage.getDatabase();
   check('A8', fresh.clients.length === 0 && fresh.invoices.length === 0, 'emptyInitialDb has no demo data');
-  check('A9', fresh.settings.accountNo === '' && fresh.settings.gst === '', 'blank company bank/tax defaults');
+  check(
+    'A9',
+    fresh.settings.gst === '' &&
+      fresh.settings.addr === '' &&
+      fresh.settings.phone === '' &&
+      fresh.settings.bankName === 'DBS Bank' &&
+      fresh.settings.accountNo === '0164360000008932' &&
+      fresh.settings.ifsc === 'DBSS0IN0164',
+    'contact/tax blank; DBS Bank invoice details present'
+  );
   check(
     'A10',
     !JSON.stringify(fresh).toLowerCase().includes('password') && !JSON.stringify(fresh).includes('hashB64'),

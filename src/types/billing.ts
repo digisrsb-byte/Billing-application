@@ -124,11 +124,13 @@ export interface DbMeta {
 
 export interface BoxConfig {
   id: string;
-  n: string; // Box name
-  p: number; // Price in ₹
+  n: string; // Box / product name
+  p: number; // Price per billed unit (box/can) in ₹
   hsn?: string;
-  pack?: string; // Pack size e.g. 1 Litre
-  qty?: number; // Stock quantity on hand
+  pack?: string; // Pack size label e.g. 1 Litre · 12 / box
+  /** Items (bottles/cans) packed per billed unit */
+  unitsPerBox?: number;
+  qty?: number; // Stock quantity on hand (optional)
 }
 
 export interface CompanySettings {
@@ -136,13 +138,17 @@ export interface CompanySettings {
   addr: string;
   phone: string;
   email: string;
-  gst: string; // GSTIN: 29DLDPK4054H1Z0
-  pan: string; // PAN: DLDPK4054H
-  state: string; // Karnataka (29)
+  gst: string; // GSTIN
+  pan: string; // PAN
+  state: string;
+  /** Display currency code — amounts are INR (₹) */
+  currency: string;
   gstOn: boolean;
-  rate: number; // default GST rate (e.g. 1%)
-  cgstSplit: number; // e.g. 0.5%
-  sgstSplit: number; // e.g. 0.5%
+  rate: number; // default GST rate % (e.g. 1)
+  /** Share of GST allocated to CGST (0–1). Default 0.5 = 50%. */
+  cgstSplit: number;
+  /** Share of GST allocated to SGST (0–1). Default 0.5 = 50%. */
+  sgstSplit: number;
   defaultHsn: string;
   bankName: string;
   accountNo: string;

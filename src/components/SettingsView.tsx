@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { AppDatabase, CompanySettings } from '../types/billing';
-import { ConfirmModal } from './ConfirmModal';
 import {
   getActiveStorageKey,
   listRecoverySources,
@@ -9,12 +8,11 @@ import {
   validateDatabaseShape,
   RecoverySource
 } from '../services/storage';
-import { Save, Download, Upload, RotateCcw, Building, CreditCard, Hash, ShieldAlert } from 'lucide-react';
+import { Save, Download, Upload, Building, CreditCard, Hash, ShieldAlert } from 'lucide-react';
 
 interface SettingsViewProps {
   db: AppDatabase;
   onUpdateSettings: (settings: CompanySettings) => void;
-  onResetData: () => void;
   /** File import after confirm — storage layer snapshots then writes */
   onImportData: (importedDb: AppDatabase, sourceLabel?: string) => void | Promise<void>;
   /** Local-key restore already persisted — only lift React state */
@@ -29,16 +27,29 @@ type PendingFileRestore = {
   invoices: number;
 };
 
+function describeShapeFailure(
+  reason: 'NOT_OBJECT' | 'MISSING_CLIENTS' | 'MISSING_INVOICES' | 'MISSING_SETTINGS'
+): string {
+  switch (reason) {
+    case 'MISSING_CLIENTS':
+      return 'Backup is incomplete — customers list is missing.';
+    case 'MISSING_INVOICES':
+      return 'Backup is incomplete — invoices list is missing.';
+    case 'MISSING_SETTINGS':
+      return 'Backup is incomplete — company settings are missing.';
+    default:
+      return 'Invalid backup file — not a recognized database export.';
+  }
+}
+
 export const SettingsView: React.FC<SettingsViewProps> = ({
   db,
   onUpdateSettings,
-  onResetData,
   onImportData,
   onDatabaseReplaced,
   showToast
 }) => {
   const [form, setForm] = useState<CompanySettings>({ ...db.settings });
-  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<PendingFileRestore | null>(null);
   const [fileConfirm, setFileConfirm] = useState('');
   const [selectedRecovery, setSelectedRecovery] = useState<RecoverySource | null>(null);
@@ -68,6 +79,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSaveAll = (e: React.FormEvent) => {
     e.preventDefault();
+    // Products stay on the Products page — never rewrite catalogue from Settings.
     onUpdateSettings({ ...form, boxes: db.settings.boxes });
     showToast('Settings saved');
   };
@@ -94,7 +106,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         const parsed = JSON.parse(event.target?.result as string);
         const shape = validateDatabaseShape(parsed);
         if (!shape.ok) {
-          showToast('Invalid backup file');
+          showToast(describeShapeFailure(shape.reason) + ' Current data was not changed.');
           return;
         }
         setPendingFile({
@@ -105,7 +117,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         });
         setFileConfirm('');
       } catch {
-        showToast('Failed to read backup file');
+        showToast('Failed to read backup file. Current data was not changed.');
       }
     };
     reader.readAsText(file);
@@ -114,7 +126,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const confirmFileRestore = () => {
     if (!pendingFile) return;
     if (fileConfirm.trim().toUpperCase() !== 'RESTORE') {
-      showToast('Type RESTORE to confirm');
+      showToast('Type RESTORE to confirm import');
       return;
     }
     void (async () => {
@@ -126,10 +138,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         showToast('Backup restored');
         setRecoveryTick((t) => t + 1);
       } catch {
-        /* App already toasted */
+        /* App already toasted — live DB preserved / rolled back by storage layer */
       }
     })();
   };
+
+  const currentHasRecords = db.clients.length > 0 || db.invoices.length > 0;
+  const pendingIsEmpty =
+    !!pendingFile && pendingFile.clients === 0 && pendingFile.invoices === 0;
 
   const inputCls =
     'w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-teal-600';
@@ -311,15 +327,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               Import backup file
               <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
             </label>
-            <button
-              type="button"
-              onClick={() => setIsResetConfirmOpen(true)}
-              className="h-10 px-4 bg-white border border-rose-200 text-rose-700 font-semibold rounded-xl flex items-center gap-2 cursor-pointer text-sm ml-auto"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Reset all data
-            </button>
           </div>
+          <p className="text-[11px] text-slate-500 m-0">
+            There is no “reset all data” action in Settings. Use Export regularly. Import only replaces data after
+            you confirm with RESTORE; invalid files never overwrite the live database.
+          </p>
 
           <div className="pt-2 space-y-2">
             <div className="text-xs font-bold text-slate-700">Local recovery copies</div>
@@ -418,16 +430,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {pendingFile && (
         <div className="fixed inset-0 z-80 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md border border-slate-200 p-5 space-y-3">
-            <h3 className="font-bold text-slate-900 text-sm m-0">Confirm file restore</h3>
+            <h3 className="font-bold text-slate-900 text-sm m-0">Confirm file import</h3>
             <p className="text-xs text-slate-600 m-0">
               Source file: <span className="font-mono">{pendingFile.fileName}</span>
               <br />
               Destination: <span className="font-mono">{destKey}</span>
               <br />
-              Validated: {pendingFile.clients} customers, {pendingFile.invoices} invoices
+              Backup contents: {pendingFile.clients} customers, {pendingFile.invoices} invoices
+              <br />
+              Current database: {db.clients.length} customers, {db.invoices.length} invoices
             </p>
+            {currentHasRecords && pendingIsEmpty && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 m-0">
+                Warning: this backup has no customers or invoices. Importing will replace your current records with
+                an empty database. A recovery snapshot of the current data is created first.
+              </p>
+            )}
             <p className="text-xs text-slate-500 m-0">
-              The current database will be snapshotted before replace. Type RESTORE to continue.
+              Importing replaces existing customers, invoices, payments, and settings. The current database will be
+              snapshotted before replace. Type RESTORE to continue.
             </p>
             <input
               type="text"
@@ -458,21 +479,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       )}
-
-      <ConfirmModal
-        isOpen={isResetConfirmOpen}
-        title="Reset all data?"
-        message="This deletes all customers, invoices, and payments and restores defaults. This cannot be undone."
-        confirmLabel="Reset everything"
-        cancelLabel="Cancel"
-        isDestructive={true}
-        onConfirm={() => {
-          setIsResetConfirmOpen(false);
-          onResetData();
-          showToast('Data reset to defaults');
-        }}
-        onCancel={() => setIsResetConfirmOpen(false)}
-      />
     </div>
   );
 };

@@ -146,8 +146,11 @@ export const BillingWorkspace: React.FC<BillingWorkspaceProps> = ({
       gstOn: gstEnabled,
       gstRate: db.settings.rate
     };
-    return calculateInvoice(draft, db.settings.rate);
-  }, [activeItems, discountAmt, gstEnabled, db.settings.rate]);
+    return calculateInvoice(draft, db.settings.rate, {
+      cgstSplit: db.settings.cgstSplit,
+      sgstSplit: db.settings.sgstSplit
+    });
+  }, [activeItems, discountAmt, gstEnabled, db.settings.rate, db.settings.cgstSplit, db.settings.sgstSplit]);
 
   // Reset current bill form
   const handleResetForm = () => {

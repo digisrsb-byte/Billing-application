@@ -92,9 +92,10 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
     () =>
       calculateInvoice(
         { items, disc, gstOn, gstRate, isInterState, pay: editingInvoice?.pay || [] },
-        gstRate
+        gstRate,
+        { cgstSplit: db.settings.cgstSplit, sgstSplit: db.settings.sgstSplit }
       ),
-    [items, disc, gstOn, gstRate, isInterState, editingInvoice]
+    [items, disc, gstOn, gstRate, isInterState, editingInvoice, db.settings.cgstSplit, db.settings.sgstSplit]
   );
 
   const updateItem = (id: string, patch: Partial<InvoiceItem>) =>
@@ -112,6 +113,7 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
       return s;
     });
     const box = boxes.find((b) => b.id === value);
+    // Snapshot current catalogue rate onto the line — later catalogue edits do not rewrite issued invoices.
     if (box) updateItem(id, { n: box.n, r: box.p, hsn: box.hsn || hsnCode });
     else updateItem(id, { n: '', r: 0 });
   };
@@ -147,7 +149,8 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
           isInterState,
           pay: []
         },
-        Number(gstRate) || db.settings.rate
+        Number(gstRate) || db.settings.rate,
+        { cgstSplit: db.settings.cgstSplit, sgstSplit: db.settings.sgstSplit }
       ).total;
       const plan = resolveCreatePaymentPlan(paymentChoice, draftTotal, receivedAmt, mode);
       if (!plan.ok) {
@@ -315,7 +318,8 @@ export const NewInvoiceModal: React.FC<NewInvoiceModalProps> = ({
                           <option value="">Choose product…</option>
                           {boxes.map((b) => (
                             <option key={b.id} value={b.id}>
-                              {b.n} — ₹{b.p}
+                              {b.n}
+                              {b.pack ? ` (${b.pack})` : b.unitsPerBox ? ` (${b.unitsPerBox}/box)` : ''} — ₹{b.p}
                             </option>
                           ))}
                           <option value="__custom">Other (type name)…</option>

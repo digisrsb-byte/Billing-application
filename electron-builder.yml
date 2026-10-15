@@ -13,11 +13,24 @@ files:
 
 asar: true
 
+# Reuse the Electron binary already installed under node_modules (npm-packaged).
+# Avoids re-downloading electron-v*-win32-x64.zip from GitHub during packaging when
+# corporate/AV HTTPS inspection breaks Node TLS verification for github.com.
+# Keeps TLS verification enabled — does not disable certificate checks.
+electronDist: node_modules/electron/dist
+
 win:
+  # Canonical icon also lives under electron/assets (packaged with the app for
+  # BrowserWindow). build/icon.ico is kept as the electron-builder buildResources copy.
+  icon: electron/assets/icon.ico
   target:
     - target: nsis
       arch:
         - x64
+  # Skip code signing only. Keep resource editing enabled so win.icon is
+  # embedded into the .exe (desktop/Start Menu/taskbar). Uses local resedit —
+  # does not download winCodeSign tooling or disable TLS verification.
+  signExecutable: false
 
 nsis:
   oneClick: false
@@ -25,3 +38,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: SRK Enterprises Billing
+  installerIcon: electron/assets/icon.ico
+  uninstallerIcon: electron/assets/icon.ico
+  installerHeaderIcon: electron/assets/icon.ico

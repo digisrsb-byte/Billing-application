@@ -109,9 +109,10 @@ export const DailyBoxBillingView: React.FC<DailyBoxBillingViewProps> = ({
     () =>
       calculateInvoice(
         { items: activeItems, disc: 0, gstOn: db.settings.gstOn, gstRate: db.settings.rate },
-        db.settings.rate
+        db.settings.rate,
+        { cgstSplit: db.settings.cgstSplit, sgstSplit: db.settings.sgstSplit }
       ),
-    [activeItems, db.settings.gstOn, db.settings.rate]
+    [activeItems, db.settings.gstOn, db.settings.rate, db.settings.cgstSplit, db.settings.sgstSplit]
   );
 
   const handleGenerate = async () => {

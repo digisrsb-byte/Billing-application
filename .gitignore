@@ -1,10 +1,18 @@
 node_modules/
 .npm-cache/
-build/
+# Ignore build/ contents except the Windows app icon assets used by electron-builder.
+build/*
+!build/icon.ico
+!build/icon.png
 dist/
 release/
+release-fresh/
+release-icon/
+tmp-build-win-log*.txt
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+
+release-final/

@@ -20,6 +20,8 @@
     "test:payment-link": "tsx tmp-payment-link-verify.mjs",
     "test:invoice-create-pay": "tsx tmp-invoice-create-payment-verify.mjs",
     "test:notifications": "tsx tmp-notifications-verify.mjs",
+    "test:data-safety": "tsx tmp-data-safety-verify.mjs",
+    "test:settings-defaults": "tsx tmp-settings-defaults-verify.mjs",
 
     "electron:dev": "concurrently -k \"vite --port=3000 --host=127.0.0.1 --strictPort\" \"wait-on http://127.0.0.1:3000 && cross-env ELECTRON_START_URL=http://127.0.0.1:3000 electron .\"",
     "electron:start": "npm run build && electron .",
